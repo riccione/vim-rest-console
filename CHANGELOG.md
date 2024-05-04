@@ -1,5 +1,9 @@
 CHANGELOG
 =========
+* 3.0.3 (2024-05-03) merge from nilsboy
+
+  * Add g:vrc_curl_timeout option
+  * Add option vrc_show_command_in_quickfix and vrc_show_command_in_results
 
 * 3.0.2 (2017-06-13)
 
