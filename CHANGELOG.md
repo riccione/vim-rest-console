@@ -1,5 +1,9 @@
 CHANGELOG
 =========
+* 3.0.4 (2024-05-04) merge from emaniacs
+  
+  * Add support for piping output
+
 * 3.0.3 (2024-05-03) merge from nilsboy
 
   * Add g:vrc_curl_timeout option
