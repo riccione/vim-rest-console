@@ -1,13 +1,20 @@
 CHANGELOG
 =========
+* 3.0.5 (2024-05-08) merge from michaelPotter
+
+  * Make http headers case-insensitive
+    from https://github.com/michaelPotter/vim-rest-console.git
+
 * 3.0.4 (2024-05-04) merge from emaniacs
   
   * Add support for piping output
+    from https://github.com/emaniacs/vim-rest-console.git
 
 * 3.0.3 (2024-05-03) merge from nilsboy
 
   * Add g:vrc_curl_timeout option
   * Add option vrc_show_command_in_quickfix and vrc_show_command_in_results
+    from https://github.com/nilsboy/vim-rest-console.git
 
 * 3.0.2 (2017-06-13)
 
