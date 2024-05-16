@@ -1,5 +1,10 @@
 CHANGELOG
 =========
+* 3.0.6 (2024-05-15) merge from gagara
+
+  * Add Feature: Response handlers
+    from https://github.com/gagara/vim-rest-console.git
+
 * 3.0.5 (2024-05-08) merge from michaelPotter
 
   * Make http headers case-insensitive
