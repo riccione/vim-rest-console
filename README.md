@@ -409,6 +409,10 @@ Thanks to the contributors (in alphabetical order of GitHub account)
     @tdroxler
     @tonyskn
     @torbjornvatn
+    @nilsboy
+    @emaniacs
+    @michaelPotter
+    @gagara
 
 ### 9. License
 
