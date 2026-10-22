@@ -87,12 +87,12 @@ Requirements:
 To install using pathogen.vim
 >
     cd ~/.vim/bundle
-    git clone https://github.com/diepm/vim-rest-console.git
+    git clone https://github.com/riccione/vim-rest-console.git
 <
 To install using Vundle
 
     " Add this line to .vimrc >
-    Plugin 'diepm/vim-rest-console'
+    Plugin 'riccione/vim-rest-console'
 <
 Other methods should work as well.
 
@@ -102,7 +102,7 @@ Other methods should work as well.
 
 For more examples, check out
 
-https://raw.githubusercontent.com/diepm/vim-rest-console/master/sample.rest
+https://raw.githubusercontent.com/riccione/vim-rest-console/master/sample.rest
 
 The following examples assume that an Elasticsearch service is running at
 localhost. The pipe (|) indicates the current position of the cursor.
