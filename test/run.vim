@@ -10,6 +10,7 @@ runtime! plugin/vrc.vim
 
 import autoload 'vrc.vim' as vrc
 import autoload 'vrc/opt.vim' as opt
+import autoload 'vrc/parser.vim' as parser
 
 var results: list<string> = []
 var failures = 0
@@ -45,7 +46,7 @@ def TestHeaderParsing(): void
     'X-Time: 12:34',
     'Content-Type:application/json',
   ])
-  var headers = vrc.ParseHeaders(1, 4)
+  var headers = parser.ParseHeaders(1, 4)
   Check('header without space after colon', 'Bearer token',
     headers['authorization'])
   Check('header value containing colon', '12:34', headers['x-time'])
@@ -57,17 +58,17 @@ def TestSubstituteVars(): void
   Check(
     'variable values are literal and longest key wins',
     '/x & y/Z',
-    vrc.SubstituteVars('/:a/:ab', {'a': 'x & y', 'ab': 'Z'})
+    parser.SubstituteVars('/:a/:ab', {'a': 'x & y', 'ab': 'Z'})
   )
   Check(
     'backslashes in variable values are literal',
     'C:\tmp\x',
-    vrc.SubstituteVars(':path', {'path': 'C:\tmp\x'})
+    parser.SubstituteVars(':path', {'path': 'C:\tmp\x'})
   )
   Check(
     'replacement expressions are not evaluated',
     '\=1+1',
-    vrc.SubstituteVars(':value', {'value': '\=1+1'})
+    parser.SubstituteVars(':value', {'value': '\=1+1'})
   )
 enddef
 
@@ -84,7 +85,7 @@ def TestGlobalSection(): void
     '--',
     'GET /city/:city',
   ])
-  var glob = vrc.ParseGlobSection()
+  var glob = parser.ParseGlobSection()
   Check('global host is parsed', 'http://host', glob['host'])
   Check('global header is parsed', 'application/json',
     glob['headers']['accept'])

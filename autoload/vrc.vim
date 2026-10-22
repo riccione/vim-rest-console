@@ -7,14 +7,13 @@ vim9script
 # HandleResponse().
 
 import autoload 'vrc/opt.vim' as opt
+import autoload 'vrc/parser.vim' as parser
 
 const autoFormatResponsePatterns: dict<string> = {
   'json': 'python -m json.tool',
   'xml': 'xmllint --format -',
 }
 
-const globDelim = '\v^--\s*$'
-const commentDelim = '\c\v^\s*(#|//)'
 const blockDelimiter = '\c\v^\s*HTTPS?://|^--\s*$'
 
 var deprecatedMessages: list<string> = []
@@ -111,306 +110,7 @@ enddef
 
 # Get the line number of the global section delimiter.
 export def LineNumGlobSectionDelim(): number
-  var curPos = getpos('.')
-  normal! gg
-  var lineNum = search(globDelim, 'cn')
-  cursor(curPos[1 :])
-  return lineNum
-enddef
-
-# Parse a host between the given line numbers (inclusive end).
-export def ParseHost(startLine: number, endLine: number): list<any>
-  if endLine < startLine
-    return [0, '']
-  endif
-  var curPos = getpos('.')
-  cursor(startLine, 1)
-  var lineNum = search('\v\c^\s*HTTPS?://', 'cn', endLine)
-  cursor(curPos[1 :])
-  if lineNum == 0
-    return [lineNum, '']
-  endif
-  return [lineNum, trim(getline(lineNum))]
-enddef
-
-# Parse the query.
-export def ParseVerbQuery(startLine: number, endLine: number): list<any>
-  var curPos = getpos('.')
-  cursor(startLine, 1)
-  var lineNum = search(
-    '\c\v^(GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS|TRACE)\s+',
-    'cn',
-    endLine
-  )
-  cursor(curPos[1 :])
-  if lineNum == 0
-    return [lineNum, '']
-  endif
-  return [lineNum, trim(getline(lineNum))]
-enddef
-
-# Parse a pipe command.
-export def ParsePipe(startLine: number, endLine: number): string
-  var pipe = ''
-  if endLine < startLine
-    return ''
-  endif
-
-  var lineBuf = getline(startLine, endLine)
-  for line in lineBuf
-    var trimmed = trim(line)
-    if trimmed == '' || trimmed =~? commentDelim || trimmed =~? '\v^--?\w+'
-      continue
-    endif
-    if trimmed =~ '^|'
-      pipe = trimmed
-    endif
-  endfor
-  return pipe
-enddef
-
-# Parse header options between the given line numbers (inclusive end).
-export def ParseHeaders(startLine: number, endLine: number): dict<any>
-  var contentTypeOpt = GetOpt('vrc_header_content_type', 'application/json')
-  var headers: dict<any> = {'content-type': contentTypeOpt}
-  if endLine < startLine
-    return headers
-  endif
-
-  var lineBuf = getline(startLine, endLine)
-  for line in lineBuf
-    var trimmed = trim(line)
-    if trimmed =~ '^|' || trimmed == '' || trimmed =~? commentDelim
-      || trimmed =~? '\v^--?\w+'
-      continue
-    endif
-    var sepIdx = stridx(trimmed, ':')
-    if sepIdx > 0
-      var key = tolower(trim(strpart(trimmed, 0, sepIdx)))
-      if !empty(key)
-        headers[key] = trim(strpart(trimmed, sepIdx + 1))
-      endif
-    endif
-  endfor
-  return headers
-enddef
-
-# Parse values in the global section.
-export def ParseVals(startLine: number, endLine: number): dict<any>
-  var vals: dict<any> = {}
-  if endLine < startLine
-    return vals
-  endif
-
-  var lineBuf = getline(startLine, endLine)
-  for line in lineBuf
-    var trimmed = trim(line)
-    if trimmed =~ '^|' || trimmed == '' || trimmed =~? commentDelim
-      continue
-    endif
-    var sepIdx = stridx(trimmed, '=')
-    if sepIdx > 0
-      var key = trim(strpart(trimmed, 0, sepIdx))
-      var val = trim(strpart(trimmed, sepIdx + 1))
-      if !empty(key)
-        if strpart(val, 0, 1) == '$'
-          vals[key] = expand(val)
-        else
-          vals[key] = val
-        endif
-      endif
-    endif
-  endfor
-  return vals
-enddef
-
-# Substitute :name variables in one pass.
-export def SubstituteVars(text: string, vals: dict<any>): string
-  if empty(vals)
-    return text
-  endif
-
-  var keys = sort(
-    keys(vals),
-    (a: string, b: string): number => strlen(b) - strlen(a)
-  )
-  var escapedKeys = mapnew(
-    keys,
-    (_, key: string): string => escape(key, '\.*$^~[]\\')
-  )
-  var pattern = ':\%(' .. join(escapedKeys, '\|') .. '\)'
-  return substitute(
-    text,
-    pattern,
-    '\=get(vals, strpart(submatch(0), 1), submatch(0))',
-    'g'
-  )
-enddef
-
-# Parse the global section.
-export def ParseGlobSection(): dict<any>
-  var globSection: dict<any> = {
-    'host': '',
-    'headers': {},
-    'curlOpts': {},
-    'vals': {},
-    'pipe': '',
-  }
-
-  # Search for the line of the global section delimiter.
-  var lastLine = LineNumGlobSectionDelim()
-  if lastLine == 0
-    return globSection
-  endif
-
-  # Parse the global host.
-  var hostParts = ParseHost(1, lastLine - 1)
-  var hostLine: number = hostParts[0]
-  var host: string = hostParts[1]
-
-  # Parse global headers.
-  var headers = ParseHeaders(hostLine + 1, lastLine - 1)
-
-  # Parse curl options.
-  var curlOpts = ParseCurlOpts(hostLine + 1, lastLine - 1)
-
-  # Parse global vals.
-  var vals = ParseVals(hostLine + 1, lastLine - 1)
-
-  # Parse the pipe command.
-  var pipe = ParsePipe(hostLine + 1, lastLine - 1)
-
-  globSection = {
-    'host': host,
-    'headers': headers,
-    'curlOpts': curlOpts,
-    'vals': vals,
-    'pipe': pipe,
-  }
-  return globSection
-enddef
-
-# Parse the specified cUrl options.
-export def ParseCurlOpts(fromLine: number, toLine: number): dict<any>
-  var curlOpts: dict<any> = {}
-  for line in getline(fromLine, toLine)
-    var trimmed = trim(line)
-    if trimmed !~? '\v^--?\w+'
-      continue
-    endif
-    var parts = split(trimmed, '\v\s', false)
-    if empty(parts)
-      continue
-    endif
-    var copt = parts[0]
-    var vals = len(parts) > 1 ? parts[1 :] : []
-    if !has_key(curlOpts, copt)
-      curlOpts[copt] = []
-    endif
-    if !empty(vals)
-      add(curlOpts[copt], join(vals, ' '))
-    endif
-  endfor
-  return curlOpts
-enddef
-
-# Parse the request block.
-export def ParseRequest(
-  startLine: number,
-  resumeFrom: number,
-  endLine: number,
-  globSection: dict<any>
-): dict<any>
-  # Parse host.
-  var hostParts = ParseHost(startLine, endLine)
-  var lineNumHost: number = hostParts[0]
-  var host: string = hostParts[1]
-  if lineNumHost == 0
-    host = get(globSection, 'host', '')
-    lineNumHost = startLine
-  endif
-  if empty(host)
-    return {
-      'success': false,
-      'msg': 'Missing host',
-    }
-  endif
-
-  # Parse the HTTP verb query.
-  var verbParts = ParseVerbQuery(resumeFrom, endLine)
-  var lineNumVerb: number = verbParts[0]
-  var restQuery: string = verbParts[1]
-  if lineNumVerb == 0
-    return {
-      'success': false,
-      'msg': 'Missing query',
-    }
-  endif
-
-  # Parse the next HTTP verb query.
-  var nextResumeFrom = lineNumVerb + 1
-  var nextVerbParts = ParseVerbQuery(lineNumVerb + 1, endLine)
-  var lineNumNextVerb: number = nextVerbParts[0]
-  if lineNumNextVerb == 0
-    nextResumeFrom = endLine + 1
-    lineNumNextVerb = endLine + 1
-  endif
-
-  # Parse headers if any and merge with global headers.
-  var localHeaders = ParseHeaders(lineNumHost + 1, lineNumVerb - 1)
-  var headers: dict<any> = deepcopy(get(globSection, 'headers', {}))
-  extend(headers, localHeaders)
-
-  # Parse curl options; local opts overwrite global opts when merged.
-  var localCurlOpts = ParseCurlOpts(lineNumHost + 1, lineNumVerb - 1)
-  var curlOpts: dict<any> = deepcopy(get(globSection, 'curlOpts', {}))
-  extend(curlOpts, localCurlOpts)
-
-  # Parse local pipe and use global pipe if empty.
-  var pipe = ParsePipe(lineNumHost + 1, lineNumVerb - 1)
-  if pipe == ''
-    pipe = get(globSection, 'pipe', '')
-  endif
-
-  var vals: dict<any> = get(globSection, 'vals', {})
-
-  # Parse HTTP verb, query path, and data body.
-  var queryParts = split(restQuery, '\v\s', false)
-  var httpVerb: string = queryParts[0]
-  var queryPath = join(queryParts[1 :], '')
-  var dataBody = getline(lineNumVerb + 1, lineNumNextVerb - 1)
-
-  # Search and replace values in queryPath, dataBody, and headers.
-  queryPath = SubstituteVars(queryPath, vals)
-  dataBody = mapnew(
-    dataBody,
-    (_, value: string): string => SubstituteVars(value, vals)
-  )
-  headers = mapnew(
-    headers,
-    (_, value: string): string => SubstituteVars(value, vals)
-  )
-
-  # Filter out comment and blank lines.
-  dataBody = filter(
-    dataBody,
-    (_, value: string): bool =>
-      value !~? '\v^\s*(#|//).*$|\v^\s*$'
-  )
-
-  # Some might need leading/trailing spaces in body rows.
-  return {
-    'success': true,
-    'resumeFrom': nextResumeFrom,
-    'msg': '',
-    'host': host,
-    'headers': headers,
-    'curlOpts': curlOpts,
-    'httpVerb': httpVerb,
-    'requestPath': queryPath,
-    'dataBody': dataBody,
-    'pipe': pipe,
-  }
+  return parser.GlobSectionEnd(getline(1, '$'))
 enddef
 
 # Construct the cUrl command given the request.
@@ -749,20 +449,20 @@ enddef
 
 # Run a REST request between the given lines.
 export def RunQuery(startLine: number, endLine: number): void
-  var globSection = ParseGlobSection()
+  var globSection = parser.ParseGlobSection()
+  var state = parser.NewState(startLine, endLine, globSection)
   var outputInfo: dict<any> = {
     'outputChunks': [],
     'commands': [],
   }
 
   # The while loop supports multiple requests using consecutive verbs.
-  var resumeFrom = startLine
   var shouldShowCommand = GetOpt('vrc_show_command', 0)
   var shouldDebug = GetOpt('vrc_debug', 0)
   var curlOpts: dict<any> = {}
   var executed = false
-  while resumeFrom <= endLine
-    var request = ParseRequest(startLine, resumeFrom, endLine, globSection)
+  while state.pos <= endLine
+    var request = parser.NextRequest(state)
     if !request.success
       # A trailing comment-only line must not turn into an error after a
       # successful request.
@@ -791,16 +491,15 @@ export def RunQuery(startLine: number, endLine: number): void
 
     if ProcessResponseHandlers(
       startLine,
-      resumeFrom,
+      request.lineNum,
       endLine,
       output,
       outputInfo
     ) != 0
       break
     endif
-    globSection = ParseGlobSection()
-
-    resumeFrom = request.resumeFrom
+    globSection = parser.ParseGlobSection()
+    state.glob = globSection
   endwhile
 
   var outputBufferName = '' .. GetOpt(
@@ -836,9 +535,9 @@ export def ProcessResponseHandlers(
   input: string,
   outputInfo: dict<any>
 ): number
-  var verbParts = ParseVerbQuery(resumeFrom, endLine)
+  var verbParts = parser.ParseVerbQuery(resumeFrom, endLine)
   var currVerb: number = verbParts[0]
-  var nextParts = ParseVerbQuery(currVerb + 1, endLine)
+  var nextParts = parser.ParseVerbQuery(currVerb + 1, endLine)
   var nextVerb: number = nextParts[0]
   if nextVerb == 0
     nextVerb = endLine
