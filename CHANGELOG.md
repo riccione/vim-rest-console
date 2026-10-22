@@ -1,5 +1,15 @@
 CHANGELOG
 =========
+* Unreleased (4.0.0)
+
+  * Require Vim 9.0+ and migrate the core implementation to Vim9script.
+  * Fix consecutive requests skipping the final verb.
+  * Fix headers without whitespace after the colon being ignored.
+  * Fix variable and response-handler substitution corrupting `&` and `\`.
+  * Fix `g:vrc_curl_opts` being mutated and support `b:vrc_curl_opts`.
+  * Fix numeric zero values and empty option lists in cURL arguments.
+  * Fix trace response handlers not producing quickfix output.
+
 * 3.0.6 (2024-05-15) merge from gagara
 
   * Add Feature: Response handlers
