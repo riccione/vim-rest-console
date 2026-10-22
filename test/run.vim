@@ -97,6 +97,55 @@ def TestGlobalSection(): void
   Check('global variable is parsed', 'Some%20City', glob['vals']['city'])
 enddef
 
+def TestQueryPathAndBlocks(): void
+  ResetBuffer(['GET /x a=1 b=2'])
+  var glob: dict<any> = {
+    'host': 'http://h',
+    'headers': {},
+    'curlOpts': {},
+    'vals': {},
+    'pipe': '',
+  }
+  var state = parser.NewState(1, 1, glob)
+  var request = parser.NextRequest(state)
+  Check('query path preserves spaces after the verb', '/x a=1 b=2',
+    request.requestPath)
+
+  ResetBuffer(['http://global', '--', 'POST /x', 'http://evil'])
+  glob = {
+    'host': 'http://global',
+    'headers': {},
+    'curlOpts': {},
+    'vals': {},
+    'pipe': '',
+  }
+  state = parser.NewState(2, 4, glob)
+  request = parser.NextRequest(state)
+  Check('body URL does not replace the host', 'http://global', request.host)
+
+  ResetBuffer([
+    'http://global',
+    '--',
+    '',
+    'http://one',
+    'GET /1',
+    '',
+    'http://two',
+    'GET /2',
+  ])
+  var lines = getline(1, '$')
+  Check('blocks are found structurally', [[4, 6], [7, 8]],
+    parser.BlockRanges(lines))
+  Check('cursor line finds its block', [4, 6],
+    parser.FindBlock(lines, 5))
+  Check('lines between blocks are not executed', [0, 0],
+    parser.FindBlock(lines, 3))
+
+  ResetBuffer(['http://h', 'GET /', 'http://evil'])
+  Check('body URL without a following verb is not a block', [[1, 3]],
+    parser.BlockRanges(getline(1, '$')))
+enddef
+
 def TestOptions(): void
   if has_key(g:, 'vrc_curl_opts')
     unlet g:vrc_curl_opts
@@ -200,6 +249,7 @@ enddef
 TestHeaderParsing()
 TestSubstituteVars()
 TestGlobalSection()
+TestQueryPathAndBlocks()
 TestOptions()
 TestConsecutiveVerbs()
 TestQueryEntryPoint()

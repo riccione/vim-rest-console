@@ -14,7 +14,6 @@ const autoFormatResponsePatterns: dict<string> = {
   'xml': 'xmllint --format -',
 }
 
-const blockDelimiter = '\c\v^\s*HTTPS?://|^--\s*$'
 
 var deprecatedMessages: list<string> = []
 const deprecatedCurlOpts: dict<string> = {
@@ -86,26 +85,7 @@ enddef
 # Get the first and last line numbers of the request block enclosing the
 # cursor.
 export def LineNumsRequestBlock(): list<number>
-  var curPos = getpos('.')
-  var blockStart = 0
-  var blockEnd = 0
-  var lineNumGlobDelim = LineNumGlobSectionDelim()
-
-  # Find the start of the enclosing request block.
-  normal! $
-  blockStart = search(blockDelimiter, 'bn')
-  if blockStart == 0 || blockStart > curPos[1] || blockStart <= lineNumGlobDelim
-    cursor(curPos[1 :])
-    return [0, 0]
-  endif
-
-  # Find the start of the next request block.
-  blockEnd = search(blockDelimiter, 'n') - 1
-  if blockEnd <= blockStart
-    blockEnd = line('$')
-  endif
-  cursor(curPos[1 :])
-  return [blockStart, blockEnd]
+  return parser.FindBlock(getline(1, '$'), line('.'))
 enddef
 
 # Get the line number of the global section delimiter.

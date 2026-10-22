@@ -54,6 +54,69 @@ export def FindVerbLine(
   return 0
 enddef
 
+# Return true when the line looks like a request-block start.
+def IsBlockCandidate(line: string): bool
+  return line =~? '^HTTPS\?://' || line =~? '^--\s*$'
+enddef
+
+# Return true when a verb occurs before the next candidate block start.
+def HasVerbBeforeCandidate(lines: list<string>, index: number): bool
+  var next = index + 1
+  while next < len(lines)
+    if IsBlockCandidate(lines[next])
+      return false
+    endif
+    if lines[next] =~# verbPattern
+      return true
+    endif
+    next += 1
+  endwhile
+  return false
+enddef
+
+# Return the [start, end] line numbers of every request block.
+export def BlockRanges(lines: list<string>): list<list<number>>
+  var ranges: list<list<number>> = []
+  var globEnd = GlobSectionEnd(lines)
+  var starts: list<number> = []
+
+  var index = globEnd == 0 ? 0 : globEnd
+  while index < len(lines)
+    if IsBlockCandidate(lines[index])
+      && HasVerbBeforeCandidate(lines, index)
+      add(starts, index + 1)
+      # Skip ahead to the next possible block start.
+      index += 1
+      while index < len(lines) && !IsBlockCandidate(lines[index])
+        index += 1
+      endwhile
+      continue
+    endif
+    index += 1
+  endwhile
+
+  if empty(starts)
+    return ranges
+  endif
+
+  for i in range(0, len(starts) - 1)
+    var startLine = starts[i]
+    var endLine = i + 1 < len(starts) ? starts[i + 1] - 1 : len(lines)
+    add(ranges, [startLine, endLine])
+  endfor
+  return ranges
+enddef
+
+# Find the request block containing the given line, or [0, 0].
+export def FindBlock(lines: list<string>, cursorLine: number): list<number>
+  for range in BlockRanges(lines)
+    if cursorLine >= range[0] && cursorLine <= range[1]
+      return range
+    endif
+  endfor
+  return [0, 0]
+enddef
+
 # Split a verb line into [verb, requested-path].
 export def ParseVerbLine(line: string): list<string>
   var matches = matchlist(line, verbPattern .. '(.*)$')
