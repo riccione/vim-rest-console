@@ -246,6 +246,11 @@ For the same keys (cUrl switch) specified at different scopes, the ones of the
 request blocks overwrite the ones in the global section then overwrite the
 ones defined by |vrc_curl_opts|.
 
+Option lines use simple shell-style quoting. Values containing spaces can be
+wrapped in single or double quotes. Requests are executed directly without a
+shell; `|` pipes, response handlers, and body preprocessors are shell commands
+and use the 'shell' option.
+
 For the deprecated VRC options, they can be replaced by cUrl options. For
 example, assuming they have been defined as follows.
 >
@@ -630,11 +635,13 @@ and then piping into jq minify that:
 A dictionary that contains the default cUrl options. Default: not exist.
 >
     let g:vrc_curl_opts = {
-      \ '-sS': '',               <-- options without value.
-      \ '--connect-timeout: 10,  <-- single option.
-      \ '-H': ['header1: value1', 'header2: value2'],  <-- multi-option.
+      \ '-sS': '',
+      \ '--connect-timeout': 10,
+      \ '-H': ['header1: value1', 'header2: value2'],
     \}
 <
+An empty string or an empty list means the option has no value. Numeric values,
+including 0, are passed through.
 ------------------------------------------------------------------------------
 *vrc_debug*
 
@@ -734,10 +741,13 @@ list. It's enabled by default. To disable:
 ------------------------------------------------------------------------------
 *vrc_curl_timeout*
 
-Kill curl after this timeout - default 1m.
-See man timeout for details.
+Kill the curl job after this timeout. Default: '1m'. Values may use the `ms`,
+`s`, `m`, or `h` suffix; plain numbers are seconds. Set it to 0 or an empty
+string to disable the timeout. VRC uses its own job timeout, so no external
+`timeout` program is required.
 >
     let g:vrc_curl_timeout = '5s'
+    let g:vrc_curl_timeout = '500ms'
 
 ------------------------------------------------------------------------------
 *vrc_show_command_in_result_buffer*
@@ -752,7 +762,8 @@ pane. It's disabled by default. To enable:
 Determine if the request body should be processed line by line. Default: 0.
 
 If this option is set, each line of the request body is passed to cURL using
-either `--data` or `--data-urlencode` depending on the verb.
+either `--data` or `--data-urlencode` depending on the verb. For GET, HEAD, and
+DELETE, the values are sent as URL query parameters.
 
 If the verb is `GET` and the option |vrc_allow_get_request_body| is enabled,
 this option doesn't take effect; the request body is always sent as a whole
@@ -807,6 +818,7 @@ Using external data files doesn't need the support flag.
     POST /testindex/_bulk
     @data.sample.json
 <
+Relative paths are resolved against the directory of the `.rest` buffer.
 ------------------------------------------------------------------------------
                                                               *VrcTntStxHi*
 7.2 Syntax Highlighting
