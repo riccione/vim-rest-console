@@ -12,7 +12,7 @@ HTTP page response or posting to a form.
 Requirements:
 
 * cURL
-* Vim 7.4 (might work with the older Vim versions)
+* Vim 9.0 or newer
 
 ### 2. Features
 
@@ -28,8 +28,7 @@ Requirements:
 
 ### 3. Installation
 
-VRC requires [cURL](http://curl.haxx.se/). It's tested with Vim 7.4 but might
-work with the older versions.
+VRC requires [cURL](http://curl.haxx.se/) and Vim 9.0 or newer.
 
 To install using [pathogen.vim](https://github.com/tpope/vim-pathogen)
 

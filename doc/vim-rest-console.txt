@@ -64,7 +64,7 @@ HTTP page response or posting to a form.
 
 Requirements:
   * cURL
-  * Vim 7.4 (might work with the older versions)
+  * Vim 9.0 or newer
 
 ==============================================================================
                                                                  *VrcFeatures*
