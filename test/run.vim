@@ -11,6 +11,7 @@ runtime! plugin/vrc.vim
 import autoload 'vrc.vim' as vrc
 import autoload 'vrc/opt.vim' as opt
 import autoload 'vrc/parser.vim' as parser
+import autoload 'vrc/exec.vim' as exec
 
 var results: list<string> = []
 var failures = 0
@@ -90,9 +91,9 @@ def TestGlobalSection(): void
   Check('global header is parsed', 'application/json',
     glob['headers']['accept'])
   Check('global curl flag is parsed', [],
-    glob['curlOpts']['-L'])
+    parser.OptionValues(glob['curlOpts'], '-L'))
   Check('global curl value is parsed', ['10'],
-    glob['curlOpts']['--connect-timeout'])
+    parser.OptionValues(glob['curlOpts'], '--connect-timeout'))
   Check('global pipe is parsed', '| jq .', glob['pipe'])
   Check('global variable is parsed', 'Some%20City', glob['vals']['city'])
 enddef
@@ -102,7 +103,7 @@ def TestQueryPathAndBlocks(): void
   var glob: dict<any> = {
     'host': 'http://h',
     'headers': {},
-    'curlOpts': {},
+    'curlOpts': [],
     'vals': {},
     'pipe': '',
   }
@@ -115,7 +116,7 @@ def TestQueryPathAndBlocks(): void
   glob = {
     'host': 'http://global',
     'headers': {},
-    'curlOpts': {},
+    'curlOpts': [],
     'vals': {},
     'pipe': '',
   }
@@ -144,6 +145,166 @@ def TestQueryPathAndBlocks(): void
   ResetBuffer(['http://h', 'GET /', 'http://evil'])
   Check('body URL without a following verb is not a block', [[1, 3]],
     parser.BlockRanges(getline(1, '$')))
+enddef
+
+def HasArg(argv: list<string>, name: string, value: string): bool
+  if len(argv) < 2
+    return false
+  endif
+  for i in range(0, len(argv) - 2)
+    if argv[i] ==# name && argv[i + 1] ==# value
+      return true
+    endif
+  endfor
+  return false
+enddef
+
+def TestOptionParsing(): void
+  Check(
+    'option tokenizer keeps quoted values together',
+    ['-H', 'X: y'],
+    parser.TokenizeOptionLine('-H "X: y"')
+  )
+  Check(
+    'option tokenizer handles single quotes',
+    ['--data', '{"a":1}'],
+    parser.TokenizeOptionLine("--data '{\"a\":1}'")
+  )
+  Check(
+    'option tokenizer preserves Windows paths',
+    ['--data-binary', '@C:\tmp\x'],
+    parser.TokenizeOptionLine('--data-binary @C:\tmp\x')
+  )
+
+  ResetBuffer(['-H "X: y"', '--data ''{"a":1}'''])
+  Check(
+    'curl options keep file order and values',
+    [
+      {'name': '-H', 'values': ['X: y']},
+      {'name': '--data', 'values': ['{"a":1}']},
+    ],
+    parser.ParseCurlOpts(1, 2)
+  )
+enddef
+
+def TestBuildRequest(): void
+  ResetBuffer(['http://h', '-H "X: y"', 'GET /x a=1'])
+  var glob = parser.ParseGlobSection()
+  var state = parser.NewState(1, 3, glob)
+  var request = parser.NextRequest(state)
+  var built = vrc.BuildRequest(request)
+
+  Check('curl is invoked directly', 'curl', built.argv[0])
+  Check('custom header is one argument', true,
+    HasArg(built.argv, '-H', 'X: y'))
+  Check('default content type is added', true,
+    HasArg(built.argv, '-H', 'content-type: application/json'))
+  Check('progress meter is suppressed', true,
+    index(built.argv, '-sS') >= 0)
+  Check('external timeout is not used', false,
+    index(built.argv, 'timeout') >= 0)
+  Check('URL keeps the text after the verb', 'http://h/x a=1',
+    built.argv[-1])
+
+  ResetBuffer(['http://h', 'POST /x', '{"a":1}'])
+  glob = parser.ParseGlobSection()
+  state = parser.NewState(1, 3, glob)
+  request = parser.NextRequest(state)
+  built = vrc.BuildRequest(request)
+  Check('inline body is sent through stdin', '{"a":1}', built.input)
+  Check('inline body uses @-', true,
+    HasArg(built.argv, '--data-binary', '@-'))
+
+  ResetBuffer(['http://h', 'DELETE /x', 'q=1'])
+  glob = parser.ParseGlobSection()
+  state = parser.NewState(1, 3, glob)
+  request = parser.NextRequest(state)
+  built = vrc.BuildRequest(request)
+  Check('DELETE data uses query parameters', true,
+    index(built.argv, '-G') >= 0)
+  Check('DELETE data is URL-encoded', true,
+    HasArg(built.argv, '--data-urlencode', 'q=1'))
+
+  var bodyFile = tempname()
+  writefile(['from file'], bodyFile)
+  ResetBuffer(['http://h', 'POST /x', '@' .. bodyFile])
+  glob = parser.ParseGlobSection()
+  state = parser.NewState(1, 3, glob)
+  request = parser.NextRequest(state)
+  built = vrc.BuildRequest(request)
+  Check('file body resolves to an absolute path', true,
+    HasArg(built.argv, '--data-binary', '@' .. bodyFile))
+  Check('file body does not use stdin', '', built.input)
+  delete(bodyFile)
+enddef
+
+def TestExecDefaults(): void
+  var argv = has('win32')
+    ? ['cmd', '/c', 'echo hello']
+    : ['/bin/echo', 'hello']
+  var result = exec.Run(argv)
+  Check('job_start runs an argv list', 'hello', trim(result.out))
+  Check('exit status is captured', 0, result.code)
+
+  if has('unix')
+    var failed = exec.Run(['/bin/sh', '-c', 'echo err >&2; exit 3'])
+    Check('stderr is captured', 'err', trim(failed.err))
+    Check('non-zero exit status is captured', 3, failed.code)
+
+    var timedOut = exec.Run(['/bin/sleep', '2'], '', 100)
+    Check('timeout stops the job', true, timedOut.timedout)
+  endif
+
+  Check('minutes parse to milliseconds', 60000, exec.ParseTimeout('1m'))
+  Check('seconds parse to milliseconds', 30000, exec.ParseTimeout('30s'))
+  Check('milliseconds are preserved', 500, exec.ParseTimeout('500ms'))
+  Check('zero disables the timeout', 0, exec.ParseTimeout('0'))
+enddef
+
+def TestRunnerInput(): void
+  var inputs: list<string> = []
+  def Runner(argv: list<string>, input: string, timeoutMs: number): dict<any>
+    add(inputs, input)
+    return {'code': 0, 'out': 'response', 'err': '', 'timedout': false}
+  enddef
+  exec.SetRunner(Runner)
+
+  ResetBuffer(['http://h', 'POST /x', '{"a":1}'])
+  g:vrc_output_buffer_name = '__VRC_TEST_OUT__'
+  g:vrc_auto_format_response_enabled = 0
+  g:vrc_syntax_highlight_response = 0
+  vrc.RunQuery(1, 3)
+  Check('RunQuery passes the inline body to the runner', '{"a":1}',
+    inputs[0])
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
+enddef
+
+def TestPipeRunner(): void
+  var shellInputs: list<string> = []
+  def ShellRunner(cmd: string, input: string): dict<any>
+    add(shellInputs, input)
+    return {'code': 0, 'out': 'PIPED', 'err': '', 'timedout': false}
+  enddef
+  exec.SetShellRunner(ShellRunner)
+
+  var curlCalls: list<list<string>> = []
+  def Runner(argv: list<string>, input: string, timeoutMs: number): dict<any>
+    add(curlCalls, argv)
+    return {'code': 0, 'out': 'RAW', 'err': '', 'timedout': false}
+  enddef
+  exec.SetRunner(Runner)
+
+  g:vrc_output_buffer_name = '__VRC_TEST_OUT__'
+  g:vrc_auto_format_response_enabled = 0
+  g:vrc_syntax_highlight_response = 0
+  ResetBuffer(['http://h', '| tr a-z A-Z', 'GET /'])
+  vrc.RunQuery(1, 3)
+  Check('pipe receives curl output', 'RAW', shellInputs[0])
+  Check('pipe output replaces the response', 'PIPED',
+    getbufline(bufnr('__VRC_TEST_OUT__'), 1)[0])
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
 enddef
 
 def TestOptions(): void
@@ -181,12 +342,12 @@ def TestConsecutiveVerbs(): void
   g:vrc_auto_format_response_enabled = 0
   g:vrc_syntax_highlight_response = 0
 
-  var calls: list<string> = []
-  def Runner(cmd: string): string
-    add(calls, cmd)
-    return 'response'
+  var calls: list<list<string>> = []
+  def Runner(argv: list<string>, input: string, timeoutMs: number): dict<any>
+    add(calls, argv)
+    return {'code': 0, 'out': 'response', 'err': '', 'timedout': false}
   enddef
-  vrc.SetCommandRunner(Runner)
+  exec.SetRunner(Runner)
 
   ResetBuffer(['http://h', 'GET /1', 'GET /2'])
   vrc.RunQuery(1, 3)
@@ -208,12 +369,12 @@ def TestQueryEntryPoint(): void
   g:vrc_auto_format_response_enabled = 0
   g:vrc_syntax_highlight_response = 0
 
-  var calls: list<string> = []
-  def Runner(cmd: string): string
-    add(calls, cmd)
-    return 'response'
+  var calls: list<list<string>> = []
+  def Runner(argv: list<string>, input: string, timeoutMs: number): dict<any>
+    add(calls, argv)
+    return {'code': 0, 'out': 'response', 'err': '', 'timedout': false}
   enddef
-  vrc.SetCommandRunner(Runner)
+  exec.SetRunner(Runner)
 
   ResetBuffer(['http://h', 'GET /1', 'GET /2'])
   setlocal filetype=rest
@@ -250,10 +411,15 @@ TestHeaderParsing()
 TestSubstituteVars()
 TestGlobalSection()
 TestQueryPathAndBlocks()
+TestOptionParsing()
+TestBuildRequest()
+TestExecDefaults()
 TestOptions()
 TestConsecutiveVerbs()
 TestQueryEntryPoint()
+TestRunnerInput()
 TestTraceHandler()
+TestPipeRunner()
 
 results->add('')
 if failures > 0

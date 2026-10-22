@@ -8,6 +8,7 @@ vim9script
 
 import autoload 'vrc/opt.vim' as opt
 import autoload 'vrc/parser.vim' as parser
+import autoload 'vrc/exec.vim' as exec
 
 const autoFormatResponsePatterns: dict<string> = {
   'json': 'python -m json.tool',
@@ -25,19 +26,6 @@ const deprecatedCurlOpts: dict<string> = {
   'vrc_resolve_to_ipv4': '--ipv4',
   'vrc_ssl_secure': '-k',
 }
-
-# The command runner is a seam for tests and for the future job-based
-# execution backend.  It receives the complete shell command and returns its
-# output.
-var CommandRunner: func(string): string = (cmd: string): string => system(cmd)
-
-# Properly escape a string for use in Windows and non-Windows shells.
-def Shellescape(val: string): string
-  if has('win32')
-    return '"' .. substitute(val, '["&\\]', '\\&', 'g') .. '"'
-  endif
-  return shellescape(val)
-enddef
 
 # Get a VRC option.  Use the given default value if the option is not found.
 export def GetOpt(optName: string, defaultVal: any): any
@@ -93,187 +81,189 @@ export def LineNumGlobSectionDelim(): number
   return parser.GlobSectionEnd(getline(1, '$'))
 enddef
 
-# Construct the cUrl command given the request.
-export def GetCurlCommand(request: dict<any>): list<any>
-  # Construct curl args.
-  var curlOpts: dict<any> = opt.GetDefaultCurlOpts()
-  var localOpts: dict<any> = get(request, 'curlOpts', {})
-  extend(curlOpts, localOpts)
+# Build a curl invocation for one request.
+export def BuildRequest(request: dict<any>): dict<any>
+  var opts = opt.DictToCurlPairs(opt.GetDefaultCurlOpts())
+  opts = parser.MergeCurlOpts(opts, get(request, 'curlOpts', []))
 
-  var vrcIncludeHeader = GetOpt('vrc_include_response_header', 0)
-  if vrcIncludeHeader && !opt.DictHasKeys(curlOpts, ['-i', '--include'])
-    curlOpts['-i'] = ''
+  if GetOpt('vrc_include_response_header', 0)
+    && !parser.HasOption(opts, ['-i', '--include'])
+    add(opts, {'name': '-i', 'values': []})
   endif
 
-  var vrcDebug = GetOpt('vrc_debug', 0)
-  if vrcDebug && !has_key(curlOpts, '-v')
-    curlOpts['-v'] = ''
+  if GetOpt('vrc_debug', 0)
+    && !parser.HasOption(opts, ['-v', '--verbose'])
+    add(opts, {'name': '-v', 'values': []})
   endif
 
   # Consider adding -k only if vrc_ssl_secure is configured (secureSsl > -1).
   var secureSsl = GetOpt('vrc_ssl_secure', -1)
   if request.host =~? '\v^\s*HTTPS://' && secureSsl == 0
-    && !has_key(curlOpts, '-k')
-    curlOpts['-k'] = ''
+    && !parser.HasOption(opts, ['-k', '--insecure'])
+    add(opts, {'name': '-k', 'values': []})
   endif
 
-  # Add --ipv4.
-  var resolveToIpv4 = GetOpt('vrc_resolve_to_ipv4', 0)
-  if resolveToIpv4 && !has_key(curlOpts, '--ipv4')
-    curlOpts['--ipv4'] = ''
+  if GetOpt('vrc_resolve_to_ipv4', 0) && !parser.HasOption(opts, ['--ipv4'])
+    add(opts, {'name': '--ipv4', 'values': []})
   endif
 
-  # Add --cookie-jar.
-  var cookieJar = GetOpt('vrc_cookie_jar', '')
+  var cookieJar = '' .. GetOpt('vrc_cookie_jar', '')
   if !empty(cookieJar)
-    if !has_key(curlOpts, '-b')
-      curlOpts['-b'] = cookieJar
+    if !parser.HasOption(opts, ['-b', '--cookie'])
+      add(opts, {'name': '-b', 'values': [cookieJar]})
     endif
-    if !has_key(curlOpts, '-c')
-      curlOpts['-c'] = cookieJar
+    if !parser.HasOption(opts, ['-c', '--cookie-jar'])
+      add(opts, {'name': '-c', 'values': [cookieJar]})
     endif
   endif
 
-  # Add -L option to enable redirects.
-  var locationEnabled = GetOpt('vrc_follow_redirects', 0)
-  if locationEnabled && !has_key(curlOpts, '-L')
-    curlOpts['-L'] = ''
+  if GetOpt('vrc_follow_redirects', 0) && !parser.HasOption(opts, ['-L', '--location'])
+    add(opts, {'name': '-L', 'values': []})
   endif
 
-  # Add headers.  Copy the existing -H list first so the user's
-  # g:vrc_curl_opts is never mutated.
-  var headerOpt: any = get(curlOpts, '-H', '')
-  if type(headerOpt) == v:t_list
-    curlOpts['-H'] = copy(headerOpt)
-  elseif type(headerOpt) == v:t_string && !empty(headerOpt)
-    curlOpts['-H'] = [headerOpt]
-  else
-    curlOpts['-H'] = []
-  endif
+  var headerValues: list<string> = []
   var headers: dict<any> = get(request, 'headers', {})
   for key in keys(headers)
-    add(curlOpts['-H'], key .. ': ' .. headers[key])
+    add(headerValues, key .. ': ' .. headers[key])
   endfor
+  if !empty(headerValues)
+    parser.AppendOption(opts, '-H', headerValues)
+  endif
 
-  # Timeout options.
   var vrcConnectTimeout = GetOpt('vrc_connect_timeout', 0)
-  if vrcConnectTimeout && !has_key(curlOpts, '--connect-timeout')
-    curlOpts['--connect-timeout'] = vrcConnectTimeout
+  if vrcConnectTimeout && !parser.HasOption(opts, ['--connect-timeout'])
+    add(opts, {
+      'name': '--connect-timeout',
+      'values': ['' .. vrcConnectTimeout],
+    })
   endif
 
   var vrcMaxTime = GetOpt('vrc_max_time', 0)
-  if vrcMaxTime && !has_key(curlOpts, '--max-time')
-    curlOpts['--max-time'] = vrcMaxTime
+  if vrcMaxTime && !parser.HasOption(opts, ['--max-time'])
+    add(opts, {'name': '--max-time', 'values': ['' .. vrcMaxTime]})
   endif
 
-  # Convert cUrl options to command line arguments.
-  var curlArgs = opt.DictToCurlArgs(curlOpts)
-  curlArgs = mapnew(
-    curlArgs,
-    (_, value: string): string => EscapeCurlOpt(value)
-  )
-
-  # Add HTTP verb.
-  add(curlArgs, GetCurlRequestOpt(request.httpVerb))
-
-  # Add data body.
-  if !empty(request.dataBody)
-    add(curlArgs, GetCurlDataArgs(request))
+  # Suppress curl's progress meter while still showing errors.
+  if !parser.HasOption(opts, ['-s', '--silent', '-sS'])
+    add(opts, {'name': '-sS', 'values': []})
   endif
-  var vrcCurlTimeout = '' .. GetOpt('vrc_curl_timeout', '1m')
-  return [
-    'timeout ' .. vrcCurlTimeout .. ' curl ' .. join(curlArgs) .. ' '
-      .. Shellescape(request.host .. request.requestPath),
-    curlOpts,
-  ]
+
+  var verbArgs = GetCurlRequestOpt(request.httpVerb)
+  var body = empty(request.dataBody)
+    ? {'args': [], 'input': ''}
+    : GetCurlBody(request)
+  var argv = ['curl']
+    + parser.PairsToArgs(opts)
+    + verbArgs
+    + body.args
+    + [request.host .. request.requestPath]
+
+  return {
+    'argv': argv,
+    'input': body.input,
+    'display': exec.CommandString(argv),
+    'hasResponseHeader': parser.HasOption(opts, ['-i', '--include']),
+  }
 enddef
 
-# Helper function to shell-escape cUrl options.
-def EscapeCurlOpt(val: string): string
-  return val !~ '\v^-' ? Shellescape(val) : val
-enddef
-
-# Get the cUrl option for the request method (--get, --head, -X <verb>...).
-def GetCurlRequestOpt(httpVerb: string): string
+# Get the cUrl arguments for the request method.
+def GetCurlRequestOpt(httpVerb: string): list<string>
   if httpVerb ==? 'GET'
     if GetOpt('vrc_allow_get_request_body', 0)
-      return '-X GET'
+      return ['-X', 'GET']
     endif
-    return '--get'
+    return ['--get']
   elseif httpVerb ==? 'HEAD'
-    return '--head'
+    return ['--head']
   endif
-  return '-X ' .. httpVerb
+  return ['-X', httpVerb]
 enddef
 
-# Get the cUrl option to include a data body (--data, --data-urlencode...).
-def GetCurlDataArgs(request: dict<any>): string
-  var httpVerb: string = request.httpVerb
-  var dataLines: list<any> = request.dataBody
+# Resolve a body file reference (@path) relative to the request buffer.
+def ResolveBodyFile(spec: string): string
+  var path = strpart(spec, 1)
+  if path == '-'
+    return spec
+  endif
+  if path !~# '^[/\\]' && path !~# '^\a:[\\/]'
+    var dir = fnamemodify(bufname('%'), ':p:h')
+    path = dir .. '/' .. path
+  endif
+  return '@' .. simplify(path)
+enddef
 
+# Build the body arguments and stdin for the request.
+def GetCurlBody(request: dict<any>): dict<any>
+  var httpVerb: string = request.httpVerb
+  var dataLines: list<any> = copy(request.dataBody)
   var preproc = '' .. GetOpt('vrc_body_preprocessor', '')
 
-  # These verbs should have the request body passed as POST params.
-  if httpVerb ==? 'POST'
-    || httpVerb ==? 'PUT'
-    || httpVerb ==? 'PATCH'
-    || httpVerb ==? 'OPTIONS'
-    # If data is loaded from a file.
+  var bodyVerbs = ['POST', 'PUT', 'PATCH', 'OPTIONS']
+  if index(bodyVerbs, toupper(httpVerb)) >= 0
     if stridx(get(dataLines, 0, ''), '@') == 0
-      return '--data-binary ' .. Shellescape(dataLines[0])
+      return {
+        'args': ['--data-binary', ResolveBodyFile(dataLines[0])],
+        'input': '',
+      }
     endif
 
-    # Call the body preprocessor if set.
-    if preproc != ''
-      dataLines = systemlist(preproc, join(dataLines, "\n"))
+    if !empty(preproc)
+      var pre = exec.Shell(preproc, join(dataLines, "\n"))
+      if pre.code != 0
+        echom 'VRC: body preprocessor failed with code ' .. pre.code
+      endif
+      dataLines = split(pre.out, '\n', true)
     endif
 
-    # If the request body is split line by line.
     if GetOpt('vrc_split_request_body', 0)
-      dataLines = mapnew(
-        dataLines,
-        (_, value: string): string => '--data ' .. Shellescape(value)
-      )
-      return join(dataLines)
+      var splitArgs: list<string> = []
+      for line in dataLines
+        extend(splitArgs, ['--data', line])
+      endfor
+      return {'args': splitArgs, 'input': ''}
     endif
 
-    # If ElasticSearch support is on and it is a _bulk request.
     var elasticSupport = GetOpt('vrc_elasticsearch_support', 0)
     if elasticSupport && match(request.requestPath, '/_bulk\|/_msearch') > -1
-      # shellescape also escapes \n (<NL>) to \\n; replace it back.
-      return '--data ' .. substitute(
-        Shellescape(join(dataLines, "\n") .. "\n"),
-        '\\\n',
-        "\n",
-        'g'
-      )
+      return {
+        'args': ['--data-binary', join(dataLines, "\n") .. "\n"],
+        'input': '',
+      }
     endif
 
-    # Otherwise, just join data using empty space.
-    return '--data ' .. Shellescape(join(dataLines, ''))
+    return {
+      'args': ['--data-binary', '@-'],
+      'input': join(dataLines, ''),
+    }
   endif
 
-  # If verb is GET and GET request body is allowed.
   if httpVerb ==? 'GET' && GetOpt('vrc_allow_get_request_body', 0)
-    # Call the body preprocessor if set.
-    if preproc != ''
-      dataLines = systemlist(preproc, join(dataLines, "\n"))
+    if !empty(preproc)
+      var pre = exec.Shell(preproc, join(dataLines, "\n"))
+      if pre.code != 0
+        echom 'VRC: body preprocessor failed with code ' .. pre.code
+      endif
+      dataLines = split(pre.out, '\n', true)
     endif
-    return '--data ' .. Shellescape(join(dataLines, ''))
+    return {
+      'args': ['--data-binary', '@-'],
+      'input': join(dataLines, ''),
+    }
   endif
 
-  # For other cases, the request body is passed as GET params.
-  if GetOpt('vrc_split_request_body', 0)
-    # If the request body is split, URL-encode each line.
-    dataLines = mapnew(
-      dataLines,
-      (_, value: string): string =>
-        '--data-urlencode ' .. Shellescape(value)
-    )
-    return join(dataLines)
+  # Other verbs send data as query parameters.
+  var args: list<string> = []
+  if index(['HEAD', 'DELETE'], toupper(httpVerb)) >= 0
+    add(args, '-G')
   endif
-  # Otherwise, URL-encode and send the request body as a whole.
-  return '--data-urlencode ' .. Shellescape(join(dataLines, ''))
+  if GetOpt('vrc_split_request_body', 0)
+    for line in dataLines
+      extend(args, ['--data-urlencode', line])
+    endfor
+  else
+    extend(args, ['--data-urlencode', join(dataLines, '')])
+  endif
+  return {'args': args, 'input': ''}
 enddef
 
 # Display output in the given buffer name.
@@ -439,7 +429,8 @@ export def RunQuery(startLine: number, endLine: number): void
   # The while loop supports multiple requests using consecutive verbs.
   var shouldShowCommand = GetOpt('vrc_show_command', 0)
   var shouldDebug = GetOpt('vrc_debug', 0)
-  var curlOpts: dict<any> = {}
+  var timeoutMs = exec.ParseTimeout(GetOpt('vrc_curl_timeout', '1m'))
+  var hasResponseHeader = false
   var executed = false
   while state.pos <= endLine
     var request = parser.NextRequest(state)
@@ -453,27 +444,56 @@ export def RunQuery(startLine: number, endLine: number): void
     endif
     executed = true
 
-    var cmdAndOpts = GetCurlCommand(request)
-    var curlCmd: string = cmdAndOpts[0]
-    curlOpts = cmdAndOpts[1]
+    var built = BuildRequest(request)
+    hasResponseHeader = built.hasResponseHeader
     if shouldDebug
-      echom '[Debug] Command: ' .. curlCmd
-      echom '[Debug] cUrl options: ' .. string(curlOpts)
+      echom '[Debug] Command: ' .. built.display
+      echom '[Debug] Input: ' .. string(built.input)
     endif
     redraw!
 
-    var output = CommandRunner(curlCmd .. request.pipe)
-    add(outputInfo['outputChunks'], output)
+    var result = exec.Run(built.argv, built.input, timeoutMs)
+    var requestOutput = result.out
+    var displayOutput = requestOutput
+    var errorText = ''
+    if result.timedout
+      errorText ..= 'VRC: request timed out'
+    endif
+    if !empty(result.err)
+      if !empty(errorText)
+        errorText ..= "\n"
+      endif
+      errorText ..= result.err
+    endif
+    if !empty(errorText) && (result.code != 0 || result.timedout || shouldDebug)
+      displayOutput ..= (empty(displayOutput) ? '' : "\n\n") .. errorText
+    endif
 
+    if !empty(request.pipe)
+      var piped = exec.Shell(request.pipe, requestOutput)
+      requestOutput = piped.out
+      displayOutput = requestOutput
+      if piped.code != 0
+        displayOutput ..= (empty(displayOutput) ? '' : "\n\n")
+          .. 'VRC: pipe command failed with code ' .. piped.code
+      endif
+    endif
+
+    add(outputInfo['outputChunks'], displayOutput)
+
+    var commandDisplay = built.display
+    if !empty(request.pipe)
+      commandDisplay ..= ' ' .. request.pipe
+    endif
     if shouldShowCommand
-      add(outputInfo['commands'], curlCmd)
+      add(outputInfo['commands'], commandDisplay)
     endif
 
     if ProcessResponseHandlers(
       startLine,
       request.lineNum,
       endLine,
-      output,
+      requestOutput,
       outputInfo
     ) != 0
       break
@@ -489,9 +509,7 @@ export def RunQuery(startLine: number, endLine: number): void
   DisplayOutput(
     outputBufferName,
     outputInfo,
-    {
-      'hasResponseHeader': opt.DictHasKeys(curlOpts, ['-i', '--include']),
-    }
+    {'hasResponseHeader': hasResponseHeader}
   )
 enddef
 
@@ -536,8 +554,9 @@ export def ProcessResponseHandlers(
       parts[1 : 2],
       (_, value: string): string => trim(value, ' ', 1)
     )
-    var output = system(cmd[1], input)
-    var code = v:shell_error
+    var result = exec.Shell(cmd[1], input)
+    var output = result.out
+    var code = result.code
     if !empty(cmd[0]) && trim(cmd[0]) != '?'
       var replacement = trim(output)
       var globEnd = LineNumGlobSectionDelim()
@@ -652,12 +671,14 @@ export def HandleResponse(
     if outputBuffer == -1
       continue
     endif
-    var input = getbufline(outputBuffer, 1, '$')
-    if empty(input)
+    var inputLines = getbufline(outputBuffer, 1, '$')
+    if empty(inputLines)
       continue
     endif
-    var output = system(cmd[1], input)
-    var code = v:shell_error
+    var input = join(inputLines, "\n")
+    var result = exec.Shell(cmd[1], input)
+    var output = result.out
+    var code = result.code
     if !empty(cmd[0]) && trim(cmd[0]) != '?'
       var replacement = trim(output)
       setline(
@@ -718,10 +739,4 @@ export def UndoMap(): void
   execute 'silent! vunmap <buffer> ' .. triggerKey
   execute 'silent! iunmap <buffer> ' .. triggerKey
   unlet b:vrc_mapped_trigger
-enddef
-
-# Install a command runner.  This is used by tests and will be used by the
-# async/job backend in a later phase.
-export def SetCommandRunner(Runner: func(string): string): void
-  CommandRunner = Runner
 enddef

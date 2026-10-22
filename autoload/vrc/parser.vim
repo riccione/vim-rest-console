@@ -250,7 +250,7 @@ export def ParseGlobSection(): dict<any>
   var globSection: dict<any> = {
     'host': '',
     'headers': {},
-    'curlOpts': {},
+    'curlOpts': [],
     'vals': {},
     'pipe': '',
   }
@@ -274,28 +274,152 @@ export def ParseGlobSection(): dict<any>
   }
 enddef
 
-# Parse the specified cUrl options.
-export def ParseCurlOpts(fromLine: number, toLine: number): dict<any>
-  var curlOpts: dict<any> = {}
+# Tokenize one option line.  Supports simple shell-style single/double quotes
+# and backslash escaping without treating Windows path separators as escapes.
+export def TokenizeOptionLine(line: string): list<string>
+  var tokens: list<string> = []
+  var current = ''
+  var started = false
+  var quote = ''
+  var i = 0
+
+  while i < len(line)
+    var ch = line[i]
+    if quote != ''
+      if ch == quote
+        quote = ''
+        started = true
+      elseif ch == '\' && quote == '"' && i + 1 < len(line)
+        var next = line[i + 1]
+        if next == '"' || next == '\'
+          current ..= next
+          i += 1
+        else
+          current ..= ch
+        endif
+      else
+        current ..= ch
+      endif
+    elseif ch == '"' || ch == "'"
+      quote = ch
+      started = true
+    elseif ch == '\' && i + 1 < len(line)
+      var next = line[i + 1]
+      if next =~ '\s' || next == '"' || next == "'" || next == '\'
+        current ..= next
+        i += 1
+      else
+        current ..= ch
+      endif
+      started = true
+    elseif ch =~ '\s'
+      if started
+        add(tokens, current)
+        current = ''
+        started = false
+      endif
+    else
+      current ..= ch
+      started = true
+    endif
+    i += 1
+  endwhile
+
+  if started
+    add(tokens, current)
+  endif
+  return tokens
+enddef
+
+# Parse the specified cUrl options into ordered {name, values} pairs.
+export def ParseCurlOpts(fromLine: number, toLine: number): list<dict<any>>
+  var curlOpts: list<dict<any>> = []
   for line in getline(fromLine, toLine)
     var trimmed = trim(line)
     if trimmed !~? '\v^--?\w+'
       continue
     endif
-    var parts = split(trimmed, '\v\s', false)
+    var parts = TokenizeOptionLine(trimmed)
     if empty(parts)
       continue
     endif
-    var copt = parts[0]
-    var vals = len(parts) > 1 ? parts[1 :] : []
-    if !has_key(curlOpts, copt)
-      curlOpts[copt] = []
-    endif
-    if !empty(vals)
-      add(curlOpts[copt], join(vals, ' '))
-    endif
+    add(curlOpts, {
+      'name': parts[0],
+      'values': len(parts) > 1 ? parts[1 :] : [],
+    })
   endfor
   return curlOpts
+enddef
+
+# Return the values of the first option with the given name.
+export def OptionValues(opts: list<dict<any>>, name: string): list<string>
+  for opt in opts
+    if opt.name ==# name
+      return opt.values
+    endif
+  endfor
+  return []
+enddef
+
+# Return true when one of the given option names exists.
+export def HasOption(opts: list<dict<any>>, names: list<string>): bool
+  for opt in opts
+    if index(names, opt.name) >= 0
+      return true
+    endif
+  endfor
+  return false
+enddef
+
+# Append values to an option, creating it when necessary.
+export def AppendOption(
+  opts: list<dict<any>>,
+  name: string,
+  values: list<string>
+): void
+  for opt in opts
+    if opt.name ==# name
+      extend(opt.values, values)
+      return
+    endif
+  endfor
+  add(opts, {'name': name, 'values': copy(values)})
+enddef
+
+# Merge two option lists.  Options in override replace same-named options in
+# base; repeated options inside either list are preserved.
+export def MergeCurlOpts(
+  base: list<dict<any>>,
+  override: list<dict<any>>
+): list<dict<any>>
+  var overrideNames: list<string> = []
+  for opt in override
+    add(overrideNames, opt.name)
+  endfor
+
+  var merged: list<dict<any>> = []
+  for opt in base
+    if index(overrideNames, opt.name) < 0
+      add(merged, deepcopy(opt))
+    endif
+  endfor
+  extend(merged, deepcopy(override))
+  return merged
+enddef
+
+# Flatten ordered options into command-line arguments.
+export def PairsToArgs(opts: list<dict<any>>): list<string>
+  var args: list<string> = []
+  for opt in opts
+    if empty(opt.values)
+      add(args, opt.name)
+      continue
+    endif
+    for value in opt.values
+      extend(args, [opt.name, value])
+    endfor
+  endfor
+  return args
 enddef
 
 # Create a parser state for a request block.
@@ -368,8 +492,10 @@ export def NextRequest(state: dict<any>): dict<any>
   extend(headers, localHeaders)
 
   var localCurlOpts = ParseCurlOpts(hostLine + 1, firstVerb - 1)
-  var curlOpts: dict<any> = deepcopy(get(globSection, 'curlOpts', {}))
-  extend(curlOpts, localCurlOpts)
+  var curlOpts = MergeCurlOpts(
+    get(globSection, 'curlOpts', []),
+    localCurlOpts
+  )
 
   var pipe = ParsePipe(hostLine + 1, firstVerb - 1)
   if pipe == ''
