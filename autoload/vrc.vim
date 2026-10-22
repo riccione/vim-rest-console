@@ -464,6 +464,8 @@ export def RunQuery(startLine: number, endLine: number): void
         errorText ..= "\n"
       endif
       errorText ..= result.err
+    elseif result.code != 0 && !result.timedout
+      errorText = 'VRC: curl exited with code ' .. result.code
     endif
     if !empty(errorText) && (result.code != 0 || result.timedout || shouldDebug)
       displayOutput ..= (empty(displayOutput) ? '' : "\n\n") .. errorText
