@@ -1,62 +1,82 @@
-"""
-" Some functions from ftplugin/rest.vim will be moved here.
-"
+vim9script
 
-"""
-" Get the default cUrl options defined by g:vrc_curl_opts.
-"
-" @return dict
-"
-function! vrc#opt#GetDefaultCurlOpts()
-  if !exists('g:vrc_curl_opts')
+# Helpers for VRC options and cURL argument construction.
+
+# Get an option, preferring the buffer-local value over the global value.
+export def Get(name: string, default: any): any
+  return get(b:, name, get(g:, name, default))
+enddef
+
+# Get the default cURL options.  The buffer-local option takes precedence over
+# the global option.  A deep copy is returned so callers can safely add or
+# overwrite values without mutating the user's configuration.
+export def GetDefaultCurlOpts(): dict<any>
+  var opts: any = {}
+  if has_key(b:, 'vrc_curl_opts')
+    opts = b:vrc_curl_opts
+  elseif has_key(g:, 'vrc_curl_opts')
+    opts = g:vrc_curl_opts
+  else
     return {}
   endif
-  let opts = eval('g:vrc_curl_opts')
-  if type(opts) != type({})
-    echoerr 'Option vrc_curl_opts should be a dictionary.'
+
+  if type(opts) != v:t_dict
+    echohl ErrorMsg
+    echom 'Option vrc_curl_opts should be a dictionary.'
+    echohl None
     return {}
   endif
-  return copy(opts)
-endfunction
 
-"""
-" Convert a dictionary of cUrl options to list.
-"
-" @param  dict a:dictOpts {'opt1': 'x', 'opt2': ['y', 'z']}
-" @return list ['opt', 'x', 'opt2', 'y', 'opt2', 'z']
-"
-function! vrc#opt#DictToCurlArgs(dictOpts)
-  let opts = []
-  for [key, optVal] in items(a:dictOpts)
-    if empty(optVal)
-      call add(opts, key)
+  return deepcopy(opts)
+enddef
+
+# Convert a dictionary of cURL options to a list of command line arguments.
+#
+# - An empty string or an empty list means the option is a flag.
+# - Numeric values, including 0, are passed through as their string value.
+# - A list value produces one option argument per list item.
+export def DictToCurlArgs(dictOpts: dict<any>): list<string>
+  var opts: list<string> = []
+  for key in sort(keys(dictOpts))
+    var optVal: any = dictOpts[key]
+    var optType = type(optVal)
+
+    if optType == v:t_list
+      if empty(optVal)
+        # An empty list is not a useful cURL option; skip it entirely.
+        continue
+      endif
+      for val in optVal
+        add(opts, key)
+        add(opts, ValueToString(val))
+      endfor
       continue
     endif
 
-    " Convert optVal to list.
-    if type(optVal) != type([])
-      let optVal = [optVal]
+    if optType == v:t_string && empty(optVal)
+      add(opts, key)
+      continue
     endif
-    for val in optVal
-      call add(opts, key)
-      call add(opts, val)
-    endfor
+
+    add(opts, key)
+    add(opts, ValueToString(optVal))
   endfor
   return opts
-endfunction
+enddef
 
-"""
-" Check if a dict has one of the given keys.
-"
-" @param  dict     a:dictOpts
-" @param  string[] a:keys
-" @return boolean
-"
-function! vrc#opt#DictHasKeys(dictOpts, keys)
-  for kk in a:keys
-    if has_key(a:dictOpts, kk)
-      return 1
+# Check if a dictionary has one of the given keys.
+export def DictHasKeys(dictOpts: dict<any>, keys: list<string>): bool
+  for key in keys
+    if has_key(dictOpts, key)
+      return true
     endif
   endfor
-  return 0
-endfunction
+  return false
+enddef
+
+def ValueToString(value: any): string
+  if type(value) == v:t_string
+    return value
+  endif
+  return string(value)
+enddef
