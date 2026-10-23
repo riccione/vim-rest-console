@@ -231,18 +231,18 @@ export def Show(outputInfo: dict<any>, config: dict<any>): void
     var parts = ChunkParts(chunk)
     var formatted = FormatChunk(chunk)
     var chunkLines = split(formatted, '\n', true)
-    if !empty(chunkLines) && chunkLines[-1] == ''
+    while !empty(chunkLines) && chunkLines[-1] == ''
       remove(chunkLines, -1)
-    endif
+    endwhile
     var errorText = get(chunk, 'error', '')
     if !empty(errorText)
       if !empty(chunkLines)
         add(chunkLines, '')
       endif
       var errorLines = split(errorText, '\n', true)
-      if !empty(errorLines) && errorLines[-1] == ''
+      while !empty(errorLines) && errorLines[-1] == ''
         remove(errorLines, -1)
-      endif
+      endwhile
       extend(chunkLines, errorLines)
     endif
     if empty(chunkLines)
