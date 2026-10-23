@@ -351,7 +351,9 @@ verb is appended to the output view.
 
 ### 6. Configuration
 
-https://github.com/riccione/vim-rest-console/blob/main/doc/vim-rest-console.txt
+https://github.com/riccione/vim-rest-console/blob/main/doc/vim-rest-console.md
+
+The Markdown reference is generated from the Vim help file with `make docs`.
 
 
 ### 7. Tips 'n Tricks
