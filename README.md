@@ -4,7 +4,7 @@
 
 **VRC** is a Vim plug-in to help send requests to and display responses from
 RESTful services in Vim. It's useful for working with REST services that use
-JSON to exchange information between server and client such as ElasticSearch.
+JSON to exchange information between server and client such as Elasticsearch.
 
 VRC can also be used as a cURL client for simple needs such as getting a
 HTTP page response or posting to a form.
@@ -25,9 +25,9 @@ Requirements:
 * Can have multiple VRC buffers where they all share the same output buffer or
   each can have its own output buffer.
 * Particularly useful for working with REST services that require the request
-  body to be sent in JSON such as ElasticSearch.
+  body to be sent in JSON such as Elasticsearch.
 * Syntax highlighting.
-* Supported verbs: GET, POST, PUT, HEAD, PATCH, OPTIONS, and TRACE.
+* Supported verbs: GET, POST, PUT, DELETE, HEAD, PATCH, OPTIONS, and TRACE.
 
 ### 3. Installation
 
@@ -47,15 +47,14 @@ Other methods should work as well.
 
 ### 4. Examples
 
-For more examples, check out
+For more examples, check out the `examples/` directory:
 
-https://raw.githubusercontent.com/riccione/vim-rest-console/master/sample.rest
+* `examples/sample.rest` — Elasticsearch examples.
+* `examples/sample_global.rest` — the same examples using a global section.
+* `examples/test.rest` — a small public smoke test.
+* `examples/data.sample.json` — bulk data used by `sample.rest`.
 
-there is also an alternative version using global settings:
-
-https://raw.githubusercontent.com/riccione/vim-rest-console/master/sample_global.rest
-
-The following examples assume that an ElasticSearch service is running at
+The following examples assume that an Elasticsearch service is running at
 localhost. The pipe (`|`) indicates the current position of the cursor.
 
 #### 4.1 Single VRC Buffer
@@ -151,7 +150,7 @@ is an example of a VRC buffer with multiple request blocks.
     http://example.com
     GET /path/to/resource?key=value
 
-    # POSTing to an ElasticSearch service.
+    # POSTing to an Elasticsearch service.
     http://example.com/elasticsearch
 
     // Specify optional headers.
@@ -216,7 +215,7 @@ example, assuming they have been defined as follows.
     let g:vrc_include_response_header = 1
     let g:vrc_max_time = 60
     let g:vrc_resolve_to_ipv4 = 1
-    let g:vrc_ssl_secure = 1
+    let g:vrc_ssl_secure = 0
 
 Using cUrl options,
 
@@ -306,7 +305,7 @@ environment variable:
     GET /city/:city/zip/:zip
 
     --
-    custom-header :foobar
+    custom-header: :foobar
     POST /city/:city
     { "population": :population }
 
@@ -340,7 +339,7 @@ Then the request body can be specified as
 This option won't take effect for `GET` request if the option
 `vrc_allow_get_request_body` is set.
 
-#### 5.4 Consecutive Request Verbs
+#### 5.5 Consecutive Request Verbs
 
 A request block may have consecutive request verbs. The output of each request
 verb is appended to the output view.
@@ -352,7 +351,8 @@ verb is appended to the output view.
 
 ### 6. Configuration
 
-https://github.com/riccione/vim-rest-console/blob/master/doc/vim-rest-console.txt
+https://github.com/riccione/vim-rest-console/blob/main/doc/vim-rest-console.txt
+
 
 ### 7. Tips 'n Tricks
 
@@ -389,16 +389,15 @@ equivalent to passing --data-binary flag to cURL.
 
 #### 7.2 Syntax Highlighting
 
-Though VRC supports output syntax highlighting, it's based on the response
-Content-Type. When Content-Type is not present, the output can still be
-syntax-highlighted if the appropriate ftplugin is installed. To force the
-output highlighting based on `filetype`, place this setting in `.vimrc`:
+VRC highlights responses based on the response Content-Type. When the server
+does not send a Content-Type, set a default so formatting and highlighting
+still work:
 
-    let g:vrc_output_buffer_name = '__VRC_OUTPUT.<filetype>'
+    let g:vrc_response_default_content_type = 'application/json'
 
-`filetype` can also be set in the output buffer on an ad hoc basis.
+You can also set the filetype manually in the output buffer:
 
-    # vim: set ft=json
+    :setlocal ft=json
 
 ### 8. Contributors
 
