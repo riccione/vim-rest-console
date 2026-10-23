@@ -37,7 +37,8 @@ GET /testindex/testtype/_mapping?pretty
 #
 http://localhost:9200
 
-GET /testindex/testtype/_search?pretty q=+name:FOO +value:(FOO BAR)
+GET /testindex/testtype/_search?pretty
+q=+name:FOO +value:(FOO BAR)
 
 #
 # Full-body search

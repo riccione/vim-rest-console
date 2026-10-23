@@ -1,4 +1,4 @@
-// Examples of some ElasticSearch requests.
+// Examples of some Elasticsearch requests.
 
 #
 # View nodes status
