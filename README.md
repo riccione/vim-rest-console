@@ -124,8 +124,8 @@ This example continues the previous one.
 ### 5. Usage
 
 This plug-in is activated when Vim opens a buffer of type `rest`. This may be
-a file with the extension `.rest` or a buffer with `filetype` explicitly set to
-`rest` by
+a file with the `.rest` or `.http` extension, or a buffer with `filetype`
+explicitly set to `rest` by
 
     :set ft=rest
 
@@ -181,6 +181,15 @@ is an example of a VRC buffer with multiple request blocks.
 When the trigger key is called (`<C-j>` by default), VRC processes the request
 block that the cursor stays within. The response is displayed in a new
 vertically split buffer. This output buffer is reused if it's already present.
+
+The default trigger maps to `<Plug>(vrc-query)`, so it can be remapped:
+
+    nnoremap <buffer> <C-k> <Plug>(vrc-query)
+
+Use `:VrcQuery` to run a block without the mapping, or `:{range}VrcQuery` to
+run every request block intersecting a range. Response bodies are formatted
+and highlighted per request when a Content-Type or
+`vrc_response_default_content_type` is available.
 
 By default, the display/output buffer is named `__REST_response__`. If there
 are multiple VRC buffers, they all share the same display buffer. To have a

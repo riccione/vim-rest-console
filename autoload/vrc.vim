@@ -9,12 +9,7 @@ vim9script
 import autoload 'vrc/opt.vim' as opt
 import autoload 'vrc/parser.vim' as parser
 import autoload 'vrc/exec.vim' as exec
-
-const autoFormatResponsePatterns: dict<string> = {
-  'json': 'python -m json.tool',
-  'xml': 'xmllint --format -',
-}
-
+import autoload 'vrc/display.vim' as display
 
 var deprecatedMessages: list<string> = []
 const deprecatedCurlOpts: dict<string> = {
@@ -55,19 +50,6 @@ def DeprecateOpt(optName: string, forOpt: string): void
   echom msg
   echohl None
   add(deprecatedMessages, msg)
-enddef
-
-# Get a value from a VRC dictionary option.
-def GetDict(dictName: string, key: string, defaults: dict<string>): string
-  for scope in [b:, g:]
-    if has_key(scope, dictName)
-      var dictValue: any = scope[dictName]
-      if type(dictValue) == v:t_dict && has_key(dictValue, key)
-        return dictValue[key]
-      endif
-    endif
-  endfor
-  return get(defaults, key, '')
 enddef
 
 # Get the first and last line numbers of the request block enclosing the
@@ -266,163 +248,12 @@ def GetCurlBody(request: dict<any>): dict<any>
   return {'args': args, 'input': ''}
 enddef
 
-# Display output in the given buffer name.
-def DisplayOutput(
-  tmpBufName: string,
-  outputInfo: dict<any>,
-  config: dict<any>
-): void
-  # Get view options before working in the view buffer.
-  var autoFormatResponse = GetOpt('vrc_auto_format_response_enabled', 1)
-  var syntaxHighlightResponse = GetOpt('vrc_syntax_highlight_response', 1)
-  var includeResponseHeader = get(config, 'hasResponseHeader', false)
-  var contentType = '' .. GetOpt('vrc_response_default_content_type', '')
-
-  # Setup the view.
-  var origWin = winnr()
-  var outputWin = bufwinnr(bufnr(tmpBufName))
-  if outputWin == -1
-    var cmdSplit = 'vsplit'
-    if GetOpt('vrc_horizontal_split', 0)
-      cmdSplit = 'split'
-    endif
-    if GetOpt('vrc_keepalt', 0)
-      cmdSplit = 'keepalt ' .. cmdSplit
-    endif
-
-    # Create the view if it is not loaded or hidden.
-    execute 'rightbelow ' .. cmdSplit .. ' ' .. tmpBufName
-    setlocal buftype=nofile
-    outputWin = winnr()
-  else
-    # The view is already shown; switch to it.
-    execute ':' .. outputWin .. 'wincmd w'
-  endif
-
-  # Display output in the view.
-  setlocal modifiable
-  silent! normal! ggdG
-  var output = join(outputInfo['outputChunks'], "\n\n")
-  setline(
-    '.',
-    split(substitute(output, '[[:return:]]', '', 'g'), '\v\n')
-  )
-
-  # Display commands in the quickfix window if any.
-  if GetOpt('vrc_show_command_in_quickfix', 1)
-    var commands: list<string> = outputInfo['commands']
-    if !empty(commands)
-      execute 'cgetexpr ' .. string(commands)
-      copen
-      execute ':' .. outputWin .. 'wincmd w'
-    endif
-  endif
-
-  # Detect content-type based on the returned header.
-  var emptyLineNum = 0
-  if includeResponseHeader
-    cursor(1, 0)
-    emptyLineNum = search('\v^\s*$', 'n')
-    var contentTypeLineNum = search(
-      '\v\c^Content-Type:',
-      'n',
-      emptyLineNum
-    )
-
-    if contentTypeLineNum > 0
-      contentType = substitute(
-        getline(contentTypeLineNum),
-        '\v\c^Content-Type:\s*([^;[:blank:]]*).*$',
-        '\1',
-        'g'
-      )
-    endif
-  endif
-
-  # Continue with options depending on content-type.
-  if !empty(contentType)
-    var fileType = substitute(
-      contentType,
-      '\v^.*/(.*\+)?(.*)$',
-      '\2',
-      'g'
-    )
-
-    # Never pass a server-controlled string to :execute unsanitized.
-    if fileType !~# '^[A-Za-z0-9_+-]\+$'
-      fileType = ''
-    endif
-
-    if !empty(fileType)
-      # Auto-format the response.
-      if autoFormatResponse
-        var formatCmd = GetDict(
-          'vrc_auto_format_response_patterns',
-          fileType,
-          autoFormatResponsePatterns
-        )
-        if !empty(formatCmd)
-          # Auto-format the response body.
-          var formattedBody = system(
-            formatCmd,
-            getline(emptyLineNum, '$')
-          )
-          if v:shell_error == 0
-            silent! execute ':' .. (emptyLineNum + 1) .. ',$delete _'
-            if GetOpt('vrc_auto_format_uhex', 0)
-              formattedBody = substitute(
-                formattedBody,
-                '\v\\u(\x{4})',
-                '\=nr2char(str2nr(submatch(1), 16), true)',
-                'g'
-              )
-            endif
-            append('$', split(formattedBody, '\v\n'))
-          elseif GetOpt('vrc_debug', 0)
-            echom 'VRC: auto-format error: ' .. v:shell_error
-            echom formattedBody
-          endif
-        endif
-      endif
-
-      # Syntax-highlight the response.
-      if syntaxHighlightResponse
-        syntax clear
-        try
-          execute 'syntax include @vrc_' .. fileType
-            .. ' syntax/' .. fileType .. '.vim'
-          execute 'syntax region body start=/^$/ end=/\%$/'
-            .. ' contains=@vrc_' .. fileType
-        catch
-        endtry
-      endif
-    endif
-  endif
-
-  # Display commands in the result buffer if any.
-  if GetOpt('vrc_show_command_in_result_buffer', 0)
-    var resultCommands: list<string> = outputInfo['commands']
-    if !empty(resultCommands)
-      var prefixedList = mapnew(
-        copy(resultCommands),
-        (_, value: string): string => 'REQUEST: ' .. value .. "\t"
-      )
-      append(0, prefixedList)
-      append(1, '')
-    endif
-  endif
-
-  # Finalize the view.
-  setlocal nomodifiable
-  execute ':' .. origWin .. 'wincmd w'
-enddef
-
 # Run a REST request between the given lines.
 export def RunQuery(startLine: number, endLine: number): void
   var globSection = parser.ParseGlobSection()
   var state = parser.NewState(startLine, endLine, globSection)
   var outputInfo: dict<any> = {
-    'outputChunks': [],
+    'chunks': [],
     'commands': [],
   }
 
@@ -430,7 +261,6 @@ export def RunQuery(startLine: number, endLine: number): void
   var shouldShowCommand = GetOpt('vrc_show_command', 0)
   var shouldDebug = GetOpt('vrc_debug', 0)
   var timeoutMs = exec.ParseTimeout(GetOpt('vrc_curl_timeout', '1m'))
-  var hasResponseHeader = false
   var executed = false
   while state.pos <= endLine
     var request = parser.NextRequest(state)
@@ -445,7 +275,6 @@ export def RunQuery(startLine: number, endLine: number): void
     executed = true
 
     var built = BuildRequest(request)
-    hasResponseHeader = built.hasResponseHeader
     if shouldDebug
       echom '[Debug] Command: ' .. built.display
       echom '[Debug] Input: ' .. string(built.input)
@@ -454,7 +283,6 @@ export def RunQuery(startLine: number, endLine: number): void
 
     var result = exec.Run(built.argv, built.input, timeoutMs)
     var requestOutput = result.out
-    var displayOutput = requestOutput
     var errorText = ''
     if result.timedout
       errorText ..= 'VRC: request timed out'
@@ -467,21 +295,22 @@ export def RunQuery(startLine: number, endLine: number): void
     elseif result.code != 0 && !result.timedout
       errorText = 'VRC: curl exited with code ' .. result.code
     endif
-    if !empty(errorText) && (result.code != 0 || result.timedout || shouldDebug)
-      displayOutput ..= (empty(displayOutput) ? '' : "\n\n") .. errorText
-    endif
-
     if !empty(request.pipe)
       var piped = exec.Shell(request.pipe, requestOutput)
       requestOutput = piped.out
-      displayOutput = requestOutput
       if piped.code != 0
-        displayOutput ..= (empty(displayOutput) ? '' : "\n\n")
-          .. 'VRC: pipe command failed with code ' .. piped.code
+        if !empty(errorText)
+          errorText ..= "\n"
+        endif
+        errorText ..= 'VRC: pipe command failed with code ' .. piped.code
       endif
     endif
 
-    add(outputInfo['outputChunks'], displayOutput)
+    add(outputInfo['chunks'], {
+      'text': requestOutput,
+      'error': errorText,
+      'hasResponseHeader': built.hasResponseHeader,
+    })
 
     var commandDisplay = built.display
     if !empty(request.pipe)
@@ -504,15 +333,7 @@ export def RunQuery(startLine: number, endLine: number): void
     state.glob = globSection
   endwhile
 
-  var outputBufferName = '' .. GetOpt(
-    'vrc_output_buffer_name',
-    '__REST_response__'
-  )
-  DisplayOutput(
-    outputBufferName,
-    outputInfo,
-    {'hasResponseHeader': hasResponseHeader}
-  )
+  display.Show(outputInfo, {})
 enddef
 
 # Replace the remainder of line with replacement when it starts with target.
@@ -611,28 +432,44 @@ def RestoreWinLine(prevLine: number): void
   endif
 enddef
 
-# Run a request block that encloses the cursor.
-export def Query(): void
+# Run request blocks.  With no arguments, run the block under the cursor.
+# With a range, run every block that intersects the range.
+export def Query(firstLine: number = -1, lastLine: number = -1): void
   # We will jump around; save the current win line to restore the view.
   var curWinLine = winline()
-  var curPos = getpos('.')
-  if curPos[1] <= LineNumGlobSectionDelim()
-    echom 'Cannot execute global section'
-    return
+  var executed = false
+
+  if firstLine < 0
+    var curPos = getpos('.')
+    if curPos[1] <= LineNumGlobSectionDelim()
+      echom 'Cannot execute global section'
+      return
+    endif
+
+    var block = LineNumsRequestBlock()
+    if block[0] == 0
+      RestoreWinLine(curWinLine)
+      echom 'Missing host/block start'
+      return
+    endif
+    echo 'VRC: running...'
+    RunQuery(block[0], block[1])
+    executed = true
+  else
+    var endLine = lastLine < firstLine ? firstLine : lastLine
+    for block in parser.BlockRanges(getline(1, '$'))
+      if block[1] < firstLine || block[0] > endLine
+        continue
+      endif
+      echo 'VRC: running...'
+      RunQuery(block[0], block[1])
+      executed = true
+    endfor
+    if !executed
+      echom 'No request block in range'
+    endif
   endif
 
-  # Determine the REST request block to process.
-  var block = LineNumsRequestBlock()
-  var blockStart = block[0]
-  var blockEnd = block[1]
-  if blockStart == 0
-    RestoreWinLine(curWinLine)
-    echom 'Missing host/block start'
-    return
-  endif
-
-  # Parse and execute the query.
-  RunQuery(blockStart, blockEnd)
   RestoreWinLine(curWinLine)
 
   # Display deprecated messages if any.
@@ -716,11 +553,11 @@ enddef
 export def Map(): void
   var triggerKey = '' .. GetOpt('vrc_trigger', '<C-j>')
   execute 'vnoremap <buffer> ' .. triggerKey
-    .. ' :call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
   execute 'nnoremap <buffer> ' .. triggerKey
-    .. ' :call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
   execute 'inoremap <buffer> ' .. triggerKey
-    .. ' <Esc>:call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
 
   b:vrc_mapped_trigger = triggerKey
   var undo = get(b:, 'undo_ftplugin', '')

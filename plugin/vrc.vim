@@ -5,15 +5,33 @@ if exists('g:loaded_vrc_plugin')
 endif
 g:loaded_vrc_plugin = 1
 
-command! VrcQuery call g:VrcQuery()
+command! -range VrcQuery call g:VrcQuery(<line1>, <line2>)
 command! -range VrcHandleResponse call g:VrcHandleResponse()
 
-def g:VrcQuery(): void
+nnoremap <silent> <Plug>(vrc-query)
+  \ <Cmd>call g:VrcQuery()<CR>
+xnoremap <silent> <Plug>(vrc-query)
+  \ <Cmd>call g:VrcQuery(line("'<"), line("'>"))<CR>
+inoremap <silent> <Plug>(vrc-query)
+  \ <Esc>:call g:VrcQuery()<CR>
+
+nnoremap <silent> <Plug>(vrc-handle-response)
+  \ <Cmd>call g:VrcHandleResponse()<CR>
+xnoremap <silent> <Plug>(vrc-handle-response)
+  \ <Cmd>call g:VrcHandleResponse(line("'<"), line("'>"))<CR>
+
+def g:VrcQuery(...lines: list<number>): void
   if &filetype !=# 'rest'
     echom 'VrcQuery: current buffer is not a rest buffer'
     return
   endif
-  vrc#Query()
+  if len(lines) >= 2
+    vrc#Query(lines[0], lines[1])
+  elseif len(lines) == 1
+    vrc#Query(lines[0], lines[0])
+  else
+    vrc#Query()
+  endif
 enddef
 
 def g:VrcMap(): void

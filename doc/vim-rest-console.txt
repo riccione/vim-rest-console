@@ -169,8 +169,8 @@ This example continues the previous one.
 5. USAGE~
 
 This plug-in is activated when Vim opens a buffer of type 'rest'. This may be
-a file with the extension 'rest' or a buffer with `filetype` explicitly set to
-'rest' by
+a file with the `.rest` or `.http` extension, or a buffer with `filetype`
+explicitly set to 'rest' by
 >
     :set ft=rest
 <
@@ -227,6 +227,15 @@ is an example of a VRC buffer with multiple request blocks.
 When the trigger key is called (<C-j> by default), VRC processes the request
 block that the cursor stays within. The response is displayed in a new
 vertically split buffer. This output buffer is reused if it's already present.
+
+The default trigger maps to <Plug>(vrc-query), so it can be remapped:
+>
+    nnoremap <buffer> <C-k> <Plug>(vrc-query)
+<
+Use `:VrcQuery` to run a block without the mapping, or `:{range}VrcQuery` to
+run every request block intersecting a range. Response bodies are formatted
+and highlighted per request when a Content-Type or
+|vrc_response_default_content_type| is available.
 
 By default, the display/output buffer is named '__REST_response__'. If there
 are multiple VRC buffers, they all share the same display buffer. To have a
@@ -594,18 +603,17 @@ depends on the option |vrc_response_default_content_type|.
 This option defines which external tools to use to auto-format the response
 body according to the Content-Type.
 
-The defaults are:
+The default patterns are selected at runtime:
 >
-    let s:vrc_auto_format_response_patterns = {
-      \ 'json': 'python -m json.tool',
-      \ 'xml': 'xmllint --format -',
-    \}
+    json: python3 -m json.tool, python -m json.tool, or jq .
+    xml:  xmllint --format -
 >
-Adjust the list by defining the global or buffer variable, like so:
+An empty command disables formatting for that content type. User values are
+merged with the defaults. For example:
 >
     let g:vrc_auto_format_response_patterns = {
-      \ 'json': ''
-      \ 'xml': 'tidy -xml -i -'
+      \ 'json': '',
+      \ 'xml': 'tidy -xml -i -',
     \}
 <
 If the response header isn't present (i.e., no `-i` cUrl option), this option
@@ -615,7 +623,8 @@ depends on the option |vrc_response_default_content_type|.
 *vrc_auto_format_uhex*
 
 If set, VRC will try to transform all unicode `\uXXXX` instances in the
-response to the corresponding symbols. It's turned of by default.
+response to the corresponding symbols, including surrogate pairs. It's turned
+off by default.
 
 ------------------------------------------------------------------------------
 *vrc_body_preprocessor*
@@ -720,20 +729,23 @@ default. To disable the mapping,
 <
 Once the mapping is disabled, the request block can be executed by
 >
+    :VrcQuery
+    :{range}VrcQuery
     :call VrcQuery()
 <
 ------------------------------------------------------------------------------
 *vrc_show_command*
 
-This option enables the printing of the executed curl command in the output
-pane. It's disabled by default. To enable:
+This option enables the printing of the executed curl command in the quickfix
+list (or result buffer, see |vrc_show_command_in_result_buffer|). It's
+disabled by default. To enable:
 >
     let g:vrc_show_command = 1
 <
 ------------------------------------------------------------------------------
 *vrc_show_command_in_quickfix*
 
-This option disables the printing of the executed curl command in the quickfix 
+This option controls whether executed curl commands are shown in the quickfix
 list. It's enabled by default. To disable:
 >
     let g:vrc_show_command_in_quickfix = 0
@@ -783,9 +795,15 @@ depends on the option |vrc_response_default_content_type|.
 ------------------------------------------------------------------------------
 *vrc_trigger*
 
-This option defines the trigger key. It's <C-j> by default. To remap the key,
+This option defines the trigger key. It's <C-j> by default and maps to
+<Plug>(vrc-query). To remap the key:
 >
     let g:vrc_trigger = '<C-k>'
+<
+You can also map the plug directly:
+>
+    nnoremap <buffer> <C-k> <Plug>(vrc-query)
+    xnoremap <buffer> <C-k> <Plug>(vrc-query)
 <
 ==============================================================================
                                                                     *VrcTnt*
