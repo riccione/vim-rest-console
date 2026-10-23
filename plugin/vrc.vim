@@ -3,7 +3,7 @@ vim9script
 if exists('g:loaded_vrc_plugin')
   finish
 endif
-g:loaded_vrc_plugin = 1
+g:loaded_vrc_plugin = '4.0.0'
 
 command! -range VrcQuery call g:VrcQuery(<line1>, <line2>)
 command! -range VrcHandleResponse call g:VrcHandleResponse()
