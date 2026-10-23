@@ -10,6 +10,8 @@ def JsonFormatter(): string
     return 'python3 -m json.tool'
   elseif executable('python')
     return 'python -m json.tool'
+  elseif has('win32') && executable('py')
+    return 'py -3 -m json.tool'
   elseif executable('jq')
     return 'jq .'
   endif
