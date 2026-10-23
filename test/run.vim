@@ -6,12 +6,14 @@ vim9script
 var root = expand('<sfile>:p:h:h')
 execute 'set rtp^=' .. fnameescape(root)
 filetype plugin on
+syntax on
 runtime! plugin/vrc.vim
 
 import autoload 'vrc.vim' as vrc
 import autoload 'vrc/opt.vim' as opt
 import autoload 'vrc/parser.vim' as parser
 import autoload 'vrc/exec.vim' as exec
+import autoload 'vrc/display.vim' as display
 
 var results: list<string> = []
 var failures = 0
@@ -407,6 +409,181 @@ def TestTraceHandler(): void
   endif
 enddef
 
+def TestDisplayFormatting(): void
+  var oldOut = get(g:, 'vrc_output_buffer_name', '__REST_response__')
+  var oldQuickfix = get(g:, 'vrc_show_command_in_quickfix', 1)
+  g:vrc_output_buffer_name = '__VRC_DISPLAY_OUT__'
+  g:vrc_auto_format_response_enabled = 1
+  g:vrc_syntax_highlight_response = 0
+  g:vrc_show_command_in_quickfix = 0
+  g:vrc_auto_format_response_patterns = {'json': 'cat'}
+
+  def ShellRunner(cmd: string, input: string): dict<any>
+    return {'code': 0, 'out': input, 'err': '', 'timedout': false}
+  enddef
+  exec.SetShellRunner(ShellRunner)
+
+  display.Show({
+    'chunks': [
+      {'text': '{"a":1}', 'error': '', 'hasResponseHeader': false},
+    ],
+    'commands': [],
+  }, {})
+  Check('formatting without headers has no leading blank', ['{"a":1}'],
+    getbufline(bufnr('__VRC_DISPLAY_OUT__'), 1, '$'))
+
+  display.Show({
+    'chunks': [
+      {
+        'text': "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"a\":1}",
+        'error': '',
+        'hasResponseHeader': true,
+      },
+    ],
+    'commands': [],
+  }, {})
+  Check('formatting preserves the header/body blank line',
+    ['HTTP/1.1 200 OK', 'Content-Type: application/json', '', '{"a":1}'],
+    getbufline(bufnr('__VRC_DISPLAY_OUT__'), 1, '$'))
+
+  display.Show({
+    'chunks': [
+      {'text': '{"a":1}', 'error': '', 'hasResponseHeader': false},
+      {'text': '{"b":2}', 'error': '', 'hasResponseHeader': false},
+    ],
+    'commands': [],
+  }, {})
+  Check('each response chunk is formatted separately',
+    ['{"a":1}', '', '{"b":2}'],
+    getbufline(bufnr('__VRC_DISPLAY_OUT__'), 1, '$'))
+
+  Check('content type parameters are ignored', 'json',
+    display.DetectContentType({
+      'text': "HTTP/1.1 200 OK\nContent-Type: application/json; charset=utf-8\n\n{}",
+      'hasResponseHeader': true,
+    }))
+
+  g:vrc_show_command_in_result_buffer = 1
+  display.Show({
+    'chunks': [
+      {'text': 'body', 'error': '', 'hasResponseHeader': false},
+    ],
+    'commands': ['curl x'],
+  }, {})
+  Check('result buffer commands are followed by one blank line',
+    ['REQUEST: curl x	', '', 'body'],
+    getbufline(bufnr('__VRC_DISPLAY_OUT__'), 1, '$'))
+  unlet g:vrc_show_command_in_result_buffer
+
+  g:vrc_show_command_in_quickfix = 1
+  display.Show({
+    'chunks': [
+      {'text': 'body', 'error': '', 'hasResponseHeader': false},
+    ],
+    'commands': ['curl x'],
+  }, {})
+  var qf = getqflist()
+  Check('quickfix has a title', 'VRC requests', getqflist({'title': 1}).title)
+  Check('quickfix contains the request command', 'curl x', qf[0].text)
+  silent! cclose
+
+  g:vrc_output_buffer_name = oldOut
+  g:vrc_show_command_in_quickfix = oldQuickfix
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
+  unlet g:vrc_auto_format_response_patterns
+enddef
+
+def TestDisplaySyntax(): void
+  var oldOut = get(g:, 'vrc_output_buffer_name', '__REST_response__')
+  g:vrc_output_buffer_name = '__VRC_SYNTAX_OUT__'
+  g:vrc_auto_format_response_enabled = 0
+  g:vrc_syntax_highlight_response = 1
+  g:vrc_response_default_content_type = 'application/json'
+  g:vrc_show_command_in_quickfix = 0
+
+  display.Show({
+    'chunks': [
+      {'text': '{"a":1}', 'error': '', 'hasResponseHeader': false},
+    ],
+    'commands': [],
+  }, {})
+  var buf = bufnr('__VRC_SYNTAX_OUT__')
+  var origWin = win_getid()
+  win_gotoid(bufwinid(buf))
+  Check('response body is highlighted without headers', true,
+    !empty(synIDattr(synID(1, 1, 0), 'name')))
+  Check('response body uses the syntax region', true,
+    index(mapnew(synstack(1, 1),
+      (_, v: number): string => synIDattr(v, 'name')), 'vrcBody0') >= 0)
+  win_gotoid(origWin)
+
+  display.Show({
+    'chunks': [
+      {
+        'text': "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"a\":1}",
+        'error': '',
+        'hasResponseHeader': true,
+      },
+    ],
+    'commands': [],
+  }, {})
+  win_gotoid(bufwinid(buf))
+  Check('response body is highlighted after headers', true,
+    !empty(synIDattr(synID(4, 1, 0), 'name')))
+  win_gotoid(origWin)
+
+  g:vrc_output_buffer_name = oldOut
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
+  unlet g:vrc_response_default_content_type
+  unlet g:vrc_show_command_in_quickfix
+enddef
+
+def TestFtdetect(): void
+  var httpFile = tempname() .. '.http'
+  var restFile = tempname() .. '.rest'
+  writefile(['http://h', 'GET /'], httpFile)
+  writefile(['http://h', 'GET /'], restFile)
+
+  execute 'edit! ' .. fnameescape(httpFile)
+  Check('.http files use the rest filetype', 'rest', &filetype)
+  execute 'edit! ' .. fnameescape(restFile)
+  Check('.rest files use the rest filetype', 'rest', &filetype)
+
+  enew!
+  delete(httpFile)
+  delete(restFile)
+enddef
+
+def TestMappingsAndRange(): void
+  ResetBuffer(['http://h', 'GET /1', '', 'http://h2', 'GET /2'])
+  setlocal filetype=rest
+  Check('default trigger maps to the plug mapping',
+    '<Plug>(vrc-query)', maparg('<C-j>', 'n'))
+  Check('query plug mapping exists', true,
+    !empty(maparg('<Plug>(vrc-query)', 'n')))
+
+  var calls: list<list<string>> = []
+  def Runner(argv: list<string>, input: string, timeoutMs: number): dict<any>
+    add(calls, argv)
+    return {'code': 0, 'out': 'response', 'err': '', 'timedout': false}
+  enddef
+  exec.SetRunner(Runner)
+
+  g:vrc_output_buffer_name = '__VRC_RANGE_OUT__'
+  g:vrc_auto_format_response_enabled = 0
+  g:vrc_syntax_highlight_response = 0
+  g:vrc_show_command_in_quickfix = 0
+  g:VrcQuery(1, 5)
+  Check('range query runs every block in the range', 2, len(calls))
+
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
+  unlet g:vrc_show_command_in_quickfix
+  enew!
+enddef
+
 TestHeaderParsing()
 TestSubstituteVars()
 TestGlobalSection()
@@ -420,6 +597,10 @@ TestQueryEntryPoint()
 TestRunnerInput()
 TestTraceHandler()
 TestPipeRunner()
+TestDisplayFormatting()
+TestDisplaySyntax()
+TestFtdetect()
+TestMappingsAndRange()
 
 results->add('')
 if failures > 0
