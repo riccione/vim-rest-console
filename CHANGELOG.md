@@ -1,14 +1,52 @@
-CHANGELOG
-=========
-* Unreleased (4.0.0)
+# Changelog
 
-  * Require Vim 9.0+ and migrate the core implementation to Vim9script.
-  * Fix consecutive requests skipping the final verb.
-  * Fix headers without whitespace after the colon being ignored.
-  * Fix variable and response-handler substitution corrupting `&` and `\`.
-  * Fix `g:vrc_curl_opts` being mutated and support `b:vrc_curl_opts`.
-  * Fix numeric zero values and empty option lists in cURL arguments.
-  * Fix trace response handlers not producing quickfix output.
+All notable changes to `vim-rest-console` will be documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [4.0.0] - 2026-10-23
+
+### Bug Fixes
+
+- *(parser)* Preserve query paths and block boundaries
+- *(exec)* Report non-zero curl exits
+- *(indent)* Reuse JSON indentation and add undo hook
+- *(display)* Detect Windows Python launcher
+- *(display)* Trim trailing blank chunk lines
+
+### Documentation
+
+- Require Vim 9.0
+- Document cross-platform execution changes
+- Point installation and support at the maintained fork
+- Add MIT License to the project
+- Document phase 3 behavior
+- Move examples and fix documentation errors
+- Add generated Markdown reference
+
+### Features
+
+- *(syntax)* Replace vendored YAML syntax with REST groups
+- *(ui)* Add <Plug> mappings and range-aware query command
+
+### Miscellaneous Tasks
+
+- *(release)* Add 4.0.0 changelog entry
+- *(ftdetect)* Use setfiletype and support .http
+
+### Refactoring
+
+- *(options)* Port curl option handling to Vim9script
+- [**breaking**] Migrate the request engine to Vim9script
+- *(parser)* Extract structural request parser
+- *(exec)* Run curl through job_start
+- *(display)* Extract response rendering module
+
+### Testing
+
+- Add phase 1 regression coverage
+- Cover display, syntax, and UX behavior
+- Cover unicode escape decoding
 
 * 3.0.6 (2024-05-15) merge from gagara
 
