@@ -9,6 +9,9 @@ JSON to exchange information between server and client such as ElasticSearch.
 VRC can also be used as a cURL client for simple needs such as getting a
 HTTP page response or posting to a form.
 
+> This repository is the maintained fork of the original
+> `diepm/vim-rest-console`, which is no longer maintained.
+
 Requirements:
 
 * cURL
@@ -33,12 +36,12 @@ VRC requires [cURL](http://curl.haxx.se/) and Vim 9.0 or newer.
 To install using [pathogen.vim](https://github.com/tpope/vim-pathogen)
 
     cd ~/.vim/bundle
-    git clone https://github.com/diepm/vim-rest-console.git
+    git clone https://github.com/riccione/vim-rest-console.git
 
 To install using [Vundle](https://github.com/gmarik/Vundle.vim)
 
     " Add this line to .vimrc
-    Plugin 'diepm/vim-rest-console'
+    Plugin 'riccione/vim-rest-console'
 
 Other methods should work as well.
 
@@ -46,11 +49,11 @@ Other methods should work as well.
 
 For more examples, check out
 
-https://raw.githubusercontent.com/diepm/vim-rest-console/master/sample.rest
+https://raw.githubusercontent.com/riccione/vim-rest-console/master/sample.rest
 
 there is also an alternative version using global settings:
 
-https://raw.githubusercontent.com/diepm/vim-rest-console/master/sample_global.rest
+https://raw.githubusercontent.com/riccione/vim-rest-console/master/sample_global.rest
 
 The following examples assume that an ElasticSearch service is running at
 localhost. The pipe (`|`) indicates the current position of the cursor.
@@ -340,7 +343,7 @@ verb is appended to the output view.
 
 ### 6. Configuration
 
-https://github.com/diepm/vim-rest-console/blob/master/doc/vim-rest-console.txt
+https://github.com/riccione/vim-rest-console/blob/master/doc/vim-rest-console.txt
 
 ### 7. Tips 'n Tricks
 

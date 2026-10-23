@@ -30,6 +30,30 @@ export def GetDefaultCurlOpts(): dict<any>
   return deepcopy(opts)
 enddef
 
+# Convert a dictionary of cURL options to ordered {name, values} pairs.
+export def DictToCurlPairs(dictOpts: dict<any>): list<dict<any>>
+  var pairs: list<dict<any>> = []
+  for key in sort(keys(dictOpts))
+    var optVal: any = dictOpts[key]
+    var optType = type(optVal)
+    var values: list<string> = []
+
+    if optType == v:t_list
+      if empty(optVal)
+        continue
+      endif
+      values = mapnew(optVal, (_, value: any): string => ValueToString(value))
+    elseif optType == v:t_string && empty(optVal)
+      values = []
+    else
+      values = [ValueToString(optVal)]
+    endif
+
+    add(pairs, {'name': key, 'values': values})
+  endfor
+  return pairs
+enddef
+
 # Convert a dictionary of cURL options to a list of command line arguments.
 #
 # - An empty string or an empty list means the option is a flag.
