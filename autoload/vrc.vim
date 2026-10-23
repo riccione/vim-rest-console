@@ -432,28 +432,44 @@ def RestoreWinLine(prevLine: number): void
   endif
 enddef
 
-# Run a request block that encloses the cursor.
-export def Query(): void
+# Run request blocks.  With no arguments, run the block under the cursor.
+# With a range, run every block that intersects the range.
+export def Query(firstLine: number = -1, lastLine: number = -1): void
   # We will jump around; save the current win line to restore the view.
   var curWinLine = winline()
-  var curPos = getpos('.')
-  if curPos[1] <= LineNumGlobSectionDelim()
-    echom 'Cannot execute global section'
-    return
+  var executed = false
+
+  if firstLine < 0
+    var curPos = getpos('.')
+    if curPos[1] <= LineNumGlobSectionDelim()
+      echom 'Cannot execute global section'
+      return
+    endif
+
+    var block = LineNumsRequestBlock()
+    if block[0] == 0
+      RestoreWinLine(curWinLine)
+      echom 'Missing host/block start'
+      return
+    endif
+    echo 'VRC: running...'
+    RunQuery(block[0], block[1])
+    executed = true
+  else
+    var endLine = lastLine < firstLine ? firstLine : lastLine
+    for block in parser.BlockRanges(getline(1, '$'))
+      if block[1] < firstLine || block[0] > endLine
+        continue
+      endif
+      echo 'VRC: running...'
+      RunQuery(block[0], block[1])
+      executed = true
+    endfor
+    if !executed
+      echom 'No request block in range'
+    endif
   endif
 
-  # Determine the REST request block to process.
-  var block = LineNumsRequestBlock()
-  var blockStart = block[0]
-  var blockEnd = block[1]
-  if blockStart == 0
-    RestoreWinLine(curWinLine)
-    echom 'Missing host/block start'
-    return
-  endif
-
-  # Parse and execute the query.
-  RunQuery(blockStart, blockEnd)
   RestoreWinLine(curWinLine)
 
   # Display deprecated messages if any.
@@ -537,11 +553,11 @@ enddef
 export def Map(): void
   var triggerKey = '' .. GetOpt('vrc_trigger', '<C-j>')
   execute 'vnoremap <buffer> ' .. triggerKey
-    .. ' :call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
   execute 'nnoremap <buffer> ' .. triggerKey
-    .. ' :call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
   execute 'inoremap <buffer> ' .. triggerKey
-    .. ' <Esc>:call vrc#Query()<CR>'
+    .. ' <Plug>(vrc-query)'
 
   b:vrc_mapped_trigger = triggerKey
   var undo = get(b:, 'undo_ftplugin', '')
