@@ -583,6 +583,36 @@ def TestMappingsAndRange(): void
   unlet g:vrc_show_command_in_quickfix
   enew!
 enddef
+def TestUnicodeEscapes(): void
+  var oldOut = get(g:, 'vrc_output_buffer_name', '__REST_response__')
+  g:vrc_output_buffer_name = '__VRC_UHEX_OUT__'
+  g:vrc_auto_format_response_enabled = 0
+  g:vrc_syntax_highlight_response = 0
+  g:vrc_show_command_in_quickfix = 0
+  g:vrc_response_default_content_type = 'application/json'
+  g:vrc_auto_format_uhex = 1
+
+  display.Show({
+    'chunks': [
+      {
+        'text': '{"x":"\u0041\uD83D\uDE00"}',
+        'error': '',
+        'hasResponseHeader': false,
+      },
+    ],
+    'commands': [],
+  }, {})
+  Check('unicode escapes and surrogate pairs are decoded',
+    ['{"x":"A😀"}'],
+    getbufline(bufnr('__VRC_UHEX_OUT__'), 1, '$'))
+
+  g:vrc_output_buffer_name = oldOut
+  unlet g:vrc_auto_format_response_enabled
+  unlet g:vrc_syntax_highlight_response
+  unlet g:vrc_show_command_in_quickfix
+  unlet g:vrc_response_default_content_type
+  unlet g:vrc_auto_format_uhex
+enddef
 
 TestHeaderParsing()
 TestSubstituteVars()
@@ -599,6 +629,7 @@ TestTraceHandler()
 TestPipeRunner()
 TestDisplayFormatting()
 TestDisplaySyntax()
+TestUnicodeEscapes()
 TestFtdetect()
 TestMappingsAndRange()
 
