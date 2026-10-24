@@ -39,6 +39,41 @@ jobs:
       - name: Run tests
         run: make test
 
+  async:
+    name: Async Vim v9.0.0000 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Vim
+        uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7 # v1.6.1
+        with:
+          version: v9.0.0000
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncurses-dev
+
+      - name: Install make on Windows
+        if: runner.os == 'Windows'
+        run: choco install make -y --no-progress
+
+      - name: Show versions
+        run: |
+          vim --version
+          make --version
+
+      - name: Run async tests
+        run: make test-async
+
   docs:
     name: Generated documentation
     runs-on: ubuntu-latest
