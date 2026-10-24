@@ -1,5 +1,7 @@
 # Vim REST Console (VRC)
 
+[![CI](https://github.com/riccione/vim-rest-console/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/riccione/vim-rest-console/actions/workflows/ci.yml)
+
 ### 1. Introduction
 
 **VRC** is a Vim plug-in to help send requests to and display responses from
