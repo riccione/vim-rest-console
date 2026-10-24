@@ -30,6 +30,7 @@ Requirements:
   body to be sent in JSON such as Elasticsearch.
 * Syntax highlighting.
 * Supported verbs: GET, POST, PUT, DELETE, HEAD, PATCH, OPTIONS, and TRACE.
+* Optional asynchronous execution with cancellation and request queueing.
 
 ### 3. Installation
 
@@ -350,6 +351,24 @@ verb is appended to the output view.
     PUT /test
     GET /test
     DELETE /test
+
+#### 5.6 Asynchronous Execution
+
+Set `vrc_async` to run requests in the background:
+
+    let g:vrc_async = 1
+
+Only one asynchronous run is active at a time. Additional triggers are queued
+and executed sequentially. The output buffer updates after each request
+completes.
+
+Cancel the active request and clear the queue with `:VrcCancel` or
+`<Plug>(vrc-cancel)`:
+
+    nnoremap <leader>vc <Plug>(vrc-cancel)
+
+Timeout and cancellation abort the current run. Pipes and response handlers run
+asynchronously; body preprocessors remain synchronous.
 
 ### 6. Configuration
 

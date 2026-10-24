@@ -22,8 +22,10 @@ VRC creates a vim-friendly console to interact with RESTful services.
   * [5.4 Line-by-line Request Body](#VrcSplitRequestBody)
   * [5.5 Consecutive Request Verbs](#VrcConReqVerbs)
   * [5.6 Response handlers](#VrcResponseHandlers)
+  * [5.7 Asynchronous Execution](#VrcAsyncExecution)
 * [6. Configuration](#VrcConfiguration)
   * [vrc_allow_get_request_body](#vrc_allow_get_request_body)
+  * [vrc_async](#vrc_async)
   * [vrc_auto_format_response_enabled](#vrc_auto_format_response_enabled)
   * [vrc_auto_format_response_patterns](#vrc_auto_format_response_patterns)
   * [vrc_auto_format_uhex](#vrc_auto_format_uhex)
@@ -614,6 +616,31 @@ when all requests returned `200`, or `False` otherwise. Visually select several
 handlers and use `:VrcHandleResponse` (or `:call VrcHandleResponse()`) to run
 them line by line; output is appended to the quickfix list.
 
+<a id="VrcAsyncExecution"></a>
+
+### 5.7 Asynchronous Execution
+
+By default requests run synchronously. Set [vrc_async](#vrc_async) to run them in the
+background:
+
+```vim
+let g:vrc_async = 1
+```
+
+Only one asynchronous run is active at a time. Additional triggers are queued
+and executed sequentially. The output buffer is updated after each request
+completes.
+
+Cancel the active request and clear the queue with `:VrcCancel` or
+<Plug>(vrc-cancel):
+
+```vim
+nnoremap <leader>vc <Plug>(vrc-cancel)
+```
+
+Timeout and cancellation abort the current run. Pipes and response handlers are
+executed asynchronously. Body preprocessors remain synchronous.
+
 <a id="VrcConfiguration"></a>
 
 ## 6. Configuration
@@ -659,6 +686,19 @@ GET /testindex/testtype/_search
 
 Be careful that when this option is enabled, the request body is always sent
 as a whole regardless of [vrc_split_request_body](#vrc_split_request_body).
+
+<a id="vrc_async"></a>
+### `vrc_async`
+
+Run requests asynchronously. Default: 0. Requires Vim's job and timer support.
+Only one run is active globally; later triggers are queued.
+
+```vim
+let g:vrc_async = 1
+let b:vrc_async = 1
+```
+
+Use `:VrcCancel` or <Plug>(vrc-cancel) to cancel the active run.
 
 <a id="vrc_auto_format_response_enabled"></a>
 ### `vrc_auto_format_response_enabled`
