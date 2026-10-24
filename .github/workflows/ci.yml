@@ -48,3 +48,21 @@ jobs:
 
       - name: Run tests
         run: make test
+
+  docs:
+    name: Generated documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Generate Markdown documentation
+        run: make docs
+
+      - name: Check generated documentation is current
+        run: git diff --exit-code -- doc/vim-rest-console.md
