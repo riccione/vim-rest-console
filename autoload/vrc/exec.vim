@@ -154,3 +154,142 @@ export def ParseTimeout(value: any): number
   # Plain numbers and the "s" suffix are seconds.
   return amount * 1000
 enddef
+
+# --- Async execution -------------------------------------------------------
+
+def CleanupAsync(State: dict<any>): void
+  if filereadable(State.out_file)
+    delete(State.out_file)
+  endif
+  if filereadable(State.err_file)
+    delete(State.err_file)
+  endif
+enddef
+
+def FinishAsync(State: dict<any>, status: number): void
+  if State.finished
+    return
+  endif
+  State.finished = true
+  if State.timer >= 0
+    timer_stop(State.timer)
+    State.timer = -1
+  endif
+
+  var out = filereadable(State.out_file) ? readfile(State.out_file) : []
+  var err = filereadable(State.err_file) ? readfile(State.err_file) : []
+  CleanupAsync(State)
+  State.on_done({
+    'code': status,
+    'out': substitute(join(out, "\n"), '\r\n', "\n", 'g'),
+    'err': substitute(join(err, "\n"), '\r\n', "\n", 'g'),
+    'timedout': State.timedout,
+    'cancelled': State.cancelled,
+  })
+enddef
+
+def CancelAsync(State: dict<any>): void
+  if State.finished
+    return
+  endif
+  State.cancelled = true
+  if State.timer >= 0
+    timer_stop(State.timer)
+    State.timer = -1
+  endif
+  if State.job == v:null
+    FinishAsync(State, -1)
+  elseif job_status(State.job) == 'run'
+    job_stop(State.job, has('win32') ? 'term' : 'kill')
+  else
+    FinishAsync(State, -1)
+  endif
+enddef
+
+def DefaultStart(
+  argv: list<string>,
+  input: string,
+  timeoutMs: number,
+  OnDone: func(dict<any>): void
+): dict<any>
+  var State: dict<any> = {
+    'out_file': tempname(),
+    'err_file': tempname(),
+    'finished': false,
+    'timedout': false,
+    'cancelled': false,
+    'timer': -1,
+    'job': v:null,
+    'on_done': OnDone,
+  }
+
+  var job: any = v:null
+  try
+    job = job_start(argv, {
+      'in_io': 'pipe',
+      'out_io': 'file',
+      'out_name': State.out_file,
+      'err_io': 'file',
+      'err_name': State.err_file,
+      'exit_cb': (_: job, status: number): void =>
+        FinishAsync(State, status),
+    })
+  catch
+    CleanupAsync(State)
+    FinishAsync(State, -1)
+    return {'job': v:null, 'cancel': () => CancelAsync(State)}
+  endtry
+  State.job = job
+
+  if job_status(job) == 'fail'
+    FinishAsync(State, -1)
+    return {'job': job, 'cancel': () => CancelAsync(State)}
+  endif
+
+  var channel = job_getchannel(job)
+  if !empty(input)
+    ch_sendraw(channel, input)
+  endif
+  ch_close_in(channel)
+
+  if timeoutMs > 0
+    State.timer = timer_start(timeoutMs, (_: number): void => {
+      if !State.finished && job_status(State.job) == 'run'
+        State.timedout = true
+        job_stop(State.job, has('win32') ? 'term' : 'kill')
+      endif
+    })
+  endif
+
+  return {'job': job, 'cancel': () => CancelAsync(State)}
+enddef
+
+var JobStarter: func(list<string>, string, number, func(dict<any>): void): dict<any> = DefaultStart
+
+# Replace the asynchronous starter.  Intended for tests.
+export def SetJobStarter(
+  R: func(list<string>, string, number, func(dict<any>): void): dict<any>
+): void
+  JobStarter = R
+enddef
+
+# Start a process asynchronously and invoke OnDone with the result.
+export def Start(
+  argv: list<string>,
+  input: string,
+  timeoutMs: number,
+  OnDone: func(dict<any>): void
+): dict<any>
+  return JobStarter(argv, input, timeoutMs, OnDone)
+enddef
+
+# Start a user shell command asynchronously.
+export def StartShell(
+  cmd: string,
+  input: string,
+  timeoutMs: number,
+  OnDone: func(dict<any>): void
+): dict<any>
+  var argv = split(&shell) + split(&shellcmdflag) + [cmd]
+  return JobStarter(argv, input, timeoutMs, OnDone)
+enddef
