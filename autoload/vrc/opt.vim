@@ -7,13 +7,22 @@ export def Get(name: string, default: any): any
   return get(b:, name, get(g:, name, default))
 enddef
 
+# Get an option for a specific buffer.  Use -1 for the current buffer.
+export def GetFor(targetBuf: number, name: string, default: any): any
+  if targetBuf < 0
+    return Get(name, default)
+  endif
+  return get(getbufvar(targetBuf, ''), name, get(g:, name, default))
+enddef
+
 # Get the default cURL options.  The buffer-local option takes precedence over
 # the global option.  A deep copy is returned so callers can safely add or
 # overwrite values without mutating the user's configuration.
-export def GetDefaultCurlOpts(): dict<any>
+export def GetDefaultCurlOpts(targetBuf: number = -1): dict<any>
+  var bufferVars: dict<any> = targetBuf < 0 ? b: : getbufvar(targetBuf, '')
   var opts: any = {}
-  if has_key(b:, 'vrc_curl_opts')
-    opts = b:vrc_curl_opts
+  if has_key(bufferVars, 'vrc_curl_opts')
+    opts = bufferVars['vrc_curl_opts']
   elseif has_key(g:, 'vrc_curl_opts')
     opts = g:vrc_curl_opts
   else

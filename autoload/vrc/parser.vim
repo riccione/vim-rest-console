@@ -6,9 +6,36 @@ vim9script
 # execute requests use NewState()/NextRequest(); the remaining functions are
 # available for tests and for global-section parsing.
 
+import autoload 'vrc/opt.vim' as opt
+
 const commentDelim = '\c\v^\s*(#|//)'
 const hostPattern = '\c\v^\s*HTTPS?://'
 const verbPattern = '\c\v^(GET|POST|PUT|DELETE|HEAD|PATCH|OPTIONS|TRACE)\s+'
+
+def EnsureLoaded(targetBuf: number): void
+  if targetBuf >= 0 && bufexists(targetBuf) && !bufloaded(targetBuf)
+    bufload(targetBuf)
+  endif
+enddef
+
+def Lines(targetBuf: number): list<string>
+  EnsureLoaded(targetBuf)
+  return targetBuf < 0 ? getline(1, '$') : getbufline(targetBuf, 1, '$')
+enddef
+
+def LinesRange(targetBuf: number, startLine: number, endLine: number): list<string>
+  EnsureLoaded(targetBuf)
+  return targetBuf < 0 ? getline(startLine, endLine) : getbufline(targetBuf, startLine, endLine)
+enddef
+
+def LineText(targetBuf: number, lineNum: number): string
+  if targetBuf < 0
+    return getline(lineNum)
+  endif
+  EnsureLoaded(targetBuf)
+  var lines = getbufline(targetBuf, lineNum, lineNum)
+  return empty(lines) ? '' : lines[0]
+enddef
 
 # Return the line number of the first global-section delimiter, or 0.
 export def GlobSectionEnd(lines: list<string>): number
@@ -26,10 +53,11 @@ export def FindHostLine(
   startLine: number,
   endLine: number
 ): number
-  if endLine < startLine
+  if endLine < startLine || empty(lines) || startLine > len(lines)
     return 0
   endif
-  for lnum in range(startLine, endLine)
+  var lastLine = min([endLine, len(lines)])
+  for lnum in range(startLine, lastLine)
     if lines[lnum - 1] =~# hostPattern
       return lnum
     endif
@@ -43,10 +71,11 @@ export def FindVerbLine(
   startLine: number,
   endLine: number
 ): number
-  if endLine < startLine
+  if endLine < startLine || empty(lines) || startLine > len(lines)
     return 0
   endif
-  for lnum in range(startLine, endLine)
+  var lastLine = min([endLine, len(lines)])
+  for lnum in range(startLine, lastLine)
     if lines[lnum - 1] =~# verbPattern
       return lnum
     endif
@@ -127,33 +156,45 @@ export def ParseVerbLine(line: string): list<string>
 enddef
 
 # Parse a host between the given line numbers (inclusive end).
-export def ParseHost(startLine: number, endLine: number): list<any>
-  var lines = getline(1, '$')
+export def ParseHost(
+  startLine: number,
+  endLine: number,
+  targetBuf: number = -1
+): list<any>
+  var lines = Lines(targetBuf)
   var lineNum = FindHostLine(lines, startLine, endLine)
   if lineNum == 0
     return [0, '']
   endif
-  return [lineNum, trim(getline(lineNum))]
+  return [lineNum, trim(LineText(targetBuf, lineNum))]
 enddef
 
 # Parse the query.
-export def ParseVerbQuery(startLine: number, endLine: number): list<any>
-  var lines = getline(1, '$')
+export def ParseVerbQuery(
+  startLine: number,
+  endLine: number,
+  targetBuf: number = -1
+): list<any>
+  var lines = Lines(targetBuf)
   var lineNum = FindVerbLine(lines, startLine, endLine)
   if lineNum == 0
     return [0, '']
   endif
-  return [lineNum, trim(getline(lineNum))]
+  return [lineNum, trim(LineText(targetBuf, lineNum))]
 enddef
 
 # Parse a pipe command.
-export def ParsePipe(startLine: number, endLine: number): string
+export def ParsePipe(
+  startLine: number,
+  endLine: number,
+  targetBuf: number = -1
+): string
   var pipe = ''
   if endLine < startLine
     return ''
   endif
 
-  for line in getline(startLine, endLine)
+  for line in LinesRange(targetBuf, startLine, endLine)
     var trimmed = trim(line)
     if trimmed == '' || trimmed =~? commentDelim || trimmed =~? '\v^--?\w+'
       continue
@@ -166,18 +207,22 @@ export def ParsePipe(startLine: number, endLine: number): string
 enddef
 
 # Parse header options between the given line numbers (inclusive end).
-export def ParseHeaders(startLine: number, endLine: number): dict<any>
-  var contentTypeOpt = get(b:, 'vrc_header_content_type', get(
-    g:,
+export def ParseHeaders(
+  startLine: number,
+  endLine: number,
+  targetBuf: number = -1
+): dict<any>
+  var contentTypeOpt = opt.GetFor(
+    targetBuf,
     'vrc_header_content_type',
     'application/json'
-  ))
+  )
   var headers: dict<any> = {'content-type': contentTypeOpt}
   if endLine < startLine
     return headers
   endif
 
-  for line in getline(startLine, endLine)
+  for line in LinesRange(targetBuf, startLine, endLine)
     var trimmed = trim(line)
     if trimmed =~ '^|' || trimmed == '' || trimmed =~? commentDelim
       || trimmed =~? '\v^--?\w+'
@@ -195,13 +240,17 @@ export def ParseHeaders(startLine: number, endLine: number): dict<any>
 enddef
 
 # Parse values in the global section.
-export def ParseVals(startLine: number, endLine: number): dict<any>
+export def ParseVals(
+  startLine: number,
+  endLine: number,
+  targetBuf: number = -1
+): dict<any>
   var vals: dict<any> = {}
   if endLine < startLine
     return vals
   endif
 
-  for line in getline(startLine, endLine)
+  for line in LinesRange(targetBuf, startLine, endLine)
     var trimmed = trim(line)
     if trimmed =~ '^|' || trimmed == '' || trimmed =~? commentDelim
       continue
@@ -246,7 +295,7 @@ export def SubstituteVars(text: string, vals: dict<any>): string
 enddef
 
 # Parse the global section.
-export def ParseGlobSection(): dict<any>
+export def ParseGlobSection(targetBuf: number = -1): dict<any>
   var globSection: dict<any> = {
     'host': '',
     'headers': {},
@@ -255,22 +304,22 @@ export def ParseGlobSection(): dict<any>
     'pipe': '',
   }
 
-  var lines = getline(1, '$')
+  var lines = Lines(targetBuf)
   var lastLine = GlobSectionEnd(lines)
   if lastLine == 0
     return globSection
   endif
 
   var hostLine = FindHostLine(lines, 1, lastLine - 1)
-  var host = hostLine == 0 ? '' : trim(getline(hostLine))
+  var host = hostLine == 0 ? '' : trim(LineText(targetBuf, hostLine))
   var parseFrom = hostLine == 0 ? 1 : hostLine + 1
 
   return {
     'host': host,
-    'headers': ParseHeaders(parseFrom, lastLine - 1),
-    'curlOpts': ParseCurlOpts(parseFrom, lastLine - 1),
-    'vals': ParseVals(parseFrom, lastLine - 1),
-    'pipe': ParsePipe(parseFrom, lastLine - 1),
+    'headers': ParseHeaders(parseFrom, lastLine - 1, targetBuf),
+    'curlOpts': ParseCurlOpts(parseFrom, lastLine - 1, targetBuf),
+    'vals': ParseVals(parseFrom, lastLine - 1, targetBuf),
+    'pipe': ParsePipe(parseFrom, lastLine - 1, targetBuf),
   }
 enddef
 
@@ -332,9 +381,13 @@ export def TokenizeOptionLine(line: string): list<string>
 enddef
 
 # Parse the specified cUrl options into ordered {name, values} pairs.
-export def ParseCurlOpts(fromLine: number, toLine: number): list<dict<any>>
+export def ParseCurlOpts(
+  fromLine: number,
+  toLine: number,
+  targetBuf: number = -1
+): list<dict<any>>
   var curlOpts: list<dict<any>> = []
-  for line in getline(fromLine, toLine)
+  for line in LinesRange(targetBuf, fromLine, toLine)
     var trimmed = trim(line)
     if trimmed !~? '\v^--?\w+'
       continue
@@ -426,19 +479,22 @@ enddef
 export def NewState(
   startLine: number,
   endLine: number,
-  globSection: dict<any>
+  globSection: dict<any>,
+  targetBuf: number = -1
 ): dict<any>
   return {
     'startLine': startLine,
     'endLine': endLine,
     'pos': startLine,
     'glob': globSection,
+    'bufnr': targetBuf,
   }
 enddef
 
 # Parse the next request in the block.
 export def NextRequest(state: dict<any>): dict<any>
-  var lines = getline(1, '$')
+  var targetBuf: number = get(state, 'bufnr', -1)
+  var lines = Lines(targetBuf)
   var startLine: number = state.startLine
   var endLine: number = state.endLine
   var pos: number = state.pos
@@ -487,17 +543,17 @@ export def NextRequest(state: dict<any>): dict<any>
 
   # Block-level headers, options, and pipe are only read before the first
   # verb.  This prevents request bodies from being interpreted as headers.
-  var localHeaders = ParseHeaders(hostLine + 1, firstVerb - 1)
+  var localHeaders = ParseHeaders(hostLine + 1, firstVerb - 1, targetBuf)
   var headers: dict<any> = deepcopy(get(globSection, 'headers', {}))
   extend(headers, localHeaders)
 
-  var localCurlOpts = ParseCurlOpts(hostLine + 1, firstVerb - 1)
+  var localCurlOpts = ParseCurlOpts(hostLine + 1, firstVerb - 1, targetBuf)
   var curlOpts = MergeCurlOpts(
     get(globSection, 'curlOpts', []),
     localCurlOpts
   )
 
-  var pipe = ParsePipe(hostLine + 1, firstVerb - 1)
+  var pipe = ParsePipe(hostLine + 1, firstVerb - 1, targetBuf)
   if pipe == ''
     pipe = get(globSection, 'pipe', '')
   endif
@@ -506,7 +562,11 @@ export def NextRequest(state: dict<any>): dict<any>
   var verbPath = ParseVerbLine(lines[verbLine - 1])
   var httpVerb = verbPath[0]
   var queryPath = verbPath[1]
-  var dataBody = getline(verbLine + 1, nextVerb == 0 ? endLine : nextVerb - 1)
+  var dataBody = LinesRange(
+    targetBuf,
+    verbLine + 1,
+    nextVerb == 0 ? endLine : nextVerb - 1
+  )
 
   queryPath = SubstituteVars(queryPath, vals)
   dataBody = mapnew(

@@ -29,16 +29,16 @@ def DefaultPatterns(): dict<string>
   }
 enddef
 
-def GetPatterns(): dict<string>
+def GetPatterns(targetBuf: number = -1): dict<string>
   var patterns = DefaultPatterns()
-  for scope in [g:, b:]
-    if has_key(scope, 'vrc_auto_format_response_patterns')
-      var userPatterns: any = scope.vrc_auto_format_response_patterns
-      if type(userPatterns) == v:t_dict
-        extend(patterns, userPatterns)
-      endif
-    endif
-  endfor
+  var userPatterns: any = opt.GetFor(
+    targetBuf,
+    'vrc_auto_format_response_patterns',
+    {}
+  )
+  if type(userPatterns) == v:t_dict
+    extend(patterns, userPatterns)
+  endif
   return patterns
 enddef
 
@@ -88,13 +88,14 @@ def FileTypeFor(contentType: string): string
 enddef
 
 # Split a response chunk into header text, body text, and body start line.
-def ChunkParts(chunk: dict<any>): dict<any>
+def ChunkParts(chunk: dict<any>, targetBuf: number = -1): dict<any>
   var text = get(chunk, 'text', '')
   var hasHeader = get(chunk, 'hasResponseHeader', false)
   var headerText = ''
   var bodyText = text
   var bodyStart = 1
-  var fileType = FileTypeFor('' .. opt.Get(
+  var fileType = FileTypeFor('' .. opt.GetFor(
+    targetBuf,
     'vrc_response_default_content_type',
     ''
   ))
@@ -142,82 +143,91 @@ def ChunkParts(chunk: dict<any>): dict<any>
 enddef
 
 # Return the filetype derived from a response chunk.
-export def DetectContentType(chunk: dict<any>): string
-  return ChunkParts(chunk).fileType
+export def DetectContentType(chunk: dict<any>, targetBuf: number = -1): string
+  return ChunkParts(chunk, targetBuf).fileType
 enddef
 
 # Format one response chunk and return its complete display text.
-export def FormatChunk(chunk: dict<any>): string
-  var parts = ChunkParts(chunk)
+export def FormatChunk(chunk: dict<any>, targetBuf: number = -1): string
+  var parts = ChunkParts(chunk, targetBuf)
   var body = parts.bodyText
 
-  if opt.Get('vrc_auto_format_response_enabled', 1)
-    var formatCmd = get(GetPatterns(), parts.fileType, '')
+  if opt.GetFor(targetBuf, 'vrc_auto_format_response_enabled', 1)
+    var formatCmd = get(GetPatterns(targetBuf), parts.fileType, '')
     if !empty(formatCmd)
       var result = exec.Shell(formatCmd, body)
       if result.code == 0
         body = substitute(result.out, '\n\+$', '', '')
-      elseif opt.Get('vrc_debug', 0)
+      elseif opt.GetFor(targetBuf, 'vrc_debug', 0)
         echom 'VRC: auto-format error: ' .. result.code
         echom result.err
       endif
     endif
   endif
 
-  if opt.Get('vrc_auto_format_uhex', 0)
+  if opt.GetFor(targetBuf, 'vrc_auto_format_uhex', 0)
     body = DecodeUnicodeEscapes(body)
   endif
 
   return parts.headerText .. body
 enddef
 
-def ApplySyntax(meta: list<dict<any>>): void
-  syntax clear
-  unlet! b:current_syntax
+def ApplySyntaxToWindow(win: number, meta: list<dict<any>>): void
+  try
+    win_execute(win, 'syntax clear')
+    win_execute(win, 'unlet! b:current_syntax')
 
-  var clusters: dict<string> = {}
-  var index = 0
-  var applied = false
-  for item in meta
-    if empty(item.fileType)
-      continue
-    endif
+    var clusters: dict<string> = {}
+    var index = 0
+    var applied = false
+    for item in meta
+      if empty(item.fileType)
+        continue
+      endif
 
-    var cluster = get(clusters, item.fileType, '')
-    if empty(cluster)
-      cluster = 'vrc_' .. item.fileType
-      clusters[item.fileType] = cluster
-      unlet! b:current_syntax
+      var cluster = get(clusters, item.fileType, '')
+      if empty(cluster)
+        cluster = 'vrc_' .. item.fileType
+        clusters[item.fileType] = cluster
+        win_execute(win, 'unlet! b:current_syntax')
+        try
+          win_execute(
+            win,
+            'syntax include @' .. cluster
+              .. ' syntax/' .. item.fileType .. '.vim'
+          )
+        catch
+        endtry
+      endif
+
       try
-        execute 'syntax include @' .. cluster
-          .. ' syntax/' .. item.fileType .. '.vim'
+        win_execute(
+          win,
+          'syntax region vrcBody' .. index
+            .. ' start=/\%' .. item.start .. 'l/'
+            .. ' end=/\%' .. item.end .. 'l.*/'
+            .. ' contains=@' .. cluster
+            .. ' keepend'
+        )
+        applied = true
       catch
       endtry
+      index += 1
+    endfor
+
+    if applied
+      win_execute(win, 'syntax sync fromstart')
     endif
-
-    try
-      execute 'syntax region vrcBody' .. index
-        .. ' start=/\%' .. item.start .. 'l/'
-        .. ' end=/\%' .. item.end .. 'l.*/'
-        .. ' contains=@' .. cluster
-        .. ' keepend'
-      applied = true
-    catch
-    endtry
-    index += 1
-  endfor
-
-  if applied
-    syntax sync fromstart
-  endif
-  b:current_syntax = 'vrc'
+    win_execute(win, 'let b:current_syntax = "vrc"')
+  catch
+  endtry
 enddef
 
-# Display response chunks in the output buffer.
-export def Show(outputInfo: dict<any>, config: dict<any>): void
+def BuildDisplay(outputInfo: dict<any>, targetBuf: number = -1): dict<any>
   var chunks: list<dict<any>> = get(outputInfo, 'chunks', [])
   var commands: list<string> = get(outputInfo, 'commands', [])
-  var bufName = '' .. opt.Get(
+  var bufName = '' .. opt.GetFor(
+    targetBuf,
     'vrc_output_buffer_name',
     '__REST_response__'
   )
@@ -228,8 +238,8 @@ export def Show(outputInfo: dict<any>, config: dict<any>): void
   var chunkIndex = 0
 
   for chunk in chunks
-    var parts = ChunkParts(chunk)
-    var formatted = FormatChunk(chunk)
+    var parts = ChunkParts(chunk, targetBuf)
+    var formatted = FormatChunk(chunk, targetBuf)
     var chunkLines = split(formatted, '\n', true)
     while !empty(chunkLines) && chunkLines[-1] == ''
       remove(chunkLines, -1)
@@ -270,7 +280,8 @@ export def Show(outputInfo: dict<any>, config: dict<any>): void
 
   var lines: list<string> = []
   var prefixCount = 0
-  if opt.Get('vrc_show_command_in_result_buffer', 0) && !empty(commands)
+  if opt.GetFor(targetBuf, 'vrc_show_command_in_result_buffer', 0)
+    && !empty(commands)
     for command in commands
       add(lines, 'REQUEST: ' .. command .. "\t")
     endfor
@@ -288,56 +299,87 @@ export def Show(outputInfo: dict<any>, config: dict<any>): void
     lines = ['']
   endif
 
-  # Find or create the output buffer.
+  return {
+    'lines': lines,
+    'meta': meta,
+    'commands': commands,
+    'bufName': bufName,
+  }
+enddef
+
+# Find or create the output window without leaving the current window.
+export def EnsureWindow(bufName: string, targetBuf: number = -1): number
   var buf = bufnr(bufName)
   if buf == -1
     buf = bufadd(bufName)
     bufload(buf)
   endif
 
-  var origWin = win_getid()
   var win = bufwinid(buf)
   if win == -1
+    var origWin = win_getid()
     var cmdSplit = 'vsplit'
-    if opt.Get('vrc_horizontal_split', 0)
+    if opt.GetFor(targetBuf, 'vrc_horizontal_split', 0)
       cmdSplit = 'split'
     endif
-    if opt.Get('vrc_keepalt', 0)
+    if opt.GetFor(targetBuf, 'vrc_keepalt', 0)
       cmdSplit = 'keepalt ' .. cmdSplit
     endif
     execute 'rightbelow ' .. cmdSplit
     execute 'buffer ' .. buf
     win = win_getid()
-  else
-    win_gotoid(win)
+    win_gotoid(origWin)
   endif
 
   setbufvar(buf, '&buftype', 'nofile')
   setbufvar(buf, '&swapfile', false)
   setbufvar(buf, '&bufhidden', 'hide')
   setbufvar(buf, '&undolevels', -1)
+  return win
+enddef
+
+# Update the output buffer without moving the cursor or changing windows.
+export def Update(
+  outputInfo: dict<any>,
+  final: bool = false,
+  targetBuf: number = -1
+): void
+  var built = BuildDisplay(outputInfo, targetBuf)
+  var win = EnsureWindow(built.bufName, targetBuf)
+  var buf = winbufnr(win)
+
   setbufvar(buf, '&modifiable', 1)
   deletebufline(buf, 1, '$')
-  setbufline(buf, 1, lines)
+  setbufline(buf, 1, built.lines)
   setbufvar(buf, '&modifiable', 0)
 
-  if opt.Get('vrc_show_command_in_quickfix', 1) && !empty(commands)
+  if final
+    && opt.GetFor(targetBuf, 'vrc_show_command_in_quickfix', 1)
+    && !empty(built.commands)
+    var currentWin = win_getid()
     setqflist([], 'r', {
       'title': 'VRC requests',
       'items': mapnew(
-        commands,
+        built.commands,
         (_, value: string): dict<any> => ({'text': value, 'lnum': 0})
       ),
     })
     copen
-    win_gotoid(win)
+    win_gotoid(currentWin)
   endif
 
-  if opt.Get('vrc_syntax_highlight_response', 1)
-    ApplySyntax(meta)
+  if opt.GetFor(targetBuf, 'vrc_syntax_highlight_response', 1)
+    ApplySyntaxToWindow(win, built.meta)
   else
-    syntax clear
+    win_execute(win, 'syntax clear')
   endif
+enddef
 
-  win_gotoid(origWin)
+# Display response chunks in the output buffer.
+export def Show(
+  outputInfo: dict<any>,
+  config: dict<any>,
+  targetBuf: number = -1
+): void
+  Update(outputInfo, true, targetBuf)
 enddef

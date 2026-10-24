@@ -7,6 +7,7 @@ g:loaded_vrc_plugin = '4.0.0'
 
 command! -range VrcQuery call g:VrcQuery(<line1>, <line2>)
 command! -range VrcHandleResponse call g:VrcHandleResponse()
+command! VrcCancel call vrc#Cancel()
 
 nnoremap <silent> <Plug>(vrc-query)
   \ <Cmd>call g:VrcQuery()<CR>
@@ -19,6 +20,9 @@ nnoremap <silent> <Plug>(vrc-handle-response)
   \ <Cmd>call g:VrcHandleResponse()<CR>
 xnoremap <silent> <Plug>(vrc-handle-response)
   \ <Cmd>call g:VrcHandleResponse(line("'<"), line("'>"))<CR>
+
+nnoremap <silent> <Plug>(vrc-cancel)
+  \ <Cmd>call vrc#Cancel()<CR>
 
 def g:VrcQuery(...lines: list<number>): void
   if &filetype !=# 'rest'
